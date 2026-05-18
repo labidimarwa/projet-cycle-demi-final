@@ -48,7 +48,7 @@ class JobServiceTest {
         sampleJob.setTitle("Développeur Java Senior");
         sampleJob.setDepartment("IT");
         sampleJob.setLocation("Tunis");
-        sampleJob.setContractType(ContractType.CDI);
+        sampleJob.setContractType(ContractType.CONTRACT);
         sampleJob.setExperienceLevel(ExperienceLevel.SENIOR);
         sampleJob.setDescription("Poste de développeur Java Spring Boot");
         sampleJob.setStatus(JobStatus.ACTIVE);
@@ -60,7 +60,7 @@ class JobServiceTest {
         validRequest.setTitle("Développeur Java Senior");
         validRequest.setDepartment("IT");
         validRequest.setLocation("Tunis");
-        validRequest.setContractType(ContractType.CDI);
+        validRequest.setContractType(ContractType.CONTRACT);
         validRequest.setExperienceLevel(ExperienceLevel.SENIOR);
         validRequest.setDescription("Poste de développeur Java Spring Boot");
         validRequest.setOpenPositions(2);
@@ -389,8 +389,8 @@ class JobServiceTest {
         updateReq.setTitle("Lead Developer");
         updateReq.setDepartment("R&D");
         updateReq.setLocation("Sfax");
-        updateReq.setContractType(ContractType.CDD);
-        updateReq.setExperienceLevel(ExperienceLevel.MID);
+        updateReq.setContractType(ContractType.CONTRACT);
+        updateReq.setExperienceLevel(ExperienceLevel.MID_LEVEL); 
 
         // WHEN
         JobResponse response = jobService.updateJob("job-uuid-001", updateReq);
