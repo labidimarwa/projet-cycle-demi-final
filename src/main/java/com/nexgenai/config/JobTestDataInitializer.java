@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
  * Phase 2 refactoring: delegates to the unified {@link AssessmentService}
  * instead of the now-removed {@code JobTestService}.
  */
+
 @Profile("!test")
 @Component
 @RequiredArgsConstructor
