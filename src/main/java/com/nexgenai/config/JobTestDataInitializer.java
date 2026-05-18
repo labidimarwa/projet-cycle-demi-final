@@ -3,6 +3,7 @@ package com.nexgenai.config;
 import com.nexgenai.service.AssessmentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
  * Phase 2 refactoring: delegates to the unified {@link AssessmentService}
  * instead of the now-removed {@code JobTestService}.
  */
+@Profile("!test")
 @Component
 @RequiredArgsConstructor
 public class JobTestDataInitializer implements CommandLineRunner {
