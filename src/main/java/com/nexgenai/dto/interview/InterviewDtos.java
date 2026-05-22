@@ -5,6 +5,7 @@ import com.nexgenai.model.enums.StageType;
 import lombok.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 public class InterviewDtos {
@@ -42,6 +43,17 @@ public class InterviewDtos {
 
         /** All assignees selected for this interview stage */
         private List<AssigneeDTO> assignees;
+
+        /**
+         * Phase lifecycle: NOT_CONFIGURED | CONFIGURED | IN_PROGRESS | CLOSED
+         */
+        private String phaseStatus;
+
+        /** Computed end datetime of this phase (last slot end). */
+        private LocalDateTime computedEndDateTime;
+
+        /** Number of candidates eligible for this phase. */
+        private int eligibleCandidates;
     }
 
     // ── Configuration request from frontend ───────────────────────────────────
@@ -122,5 +134,71 @@ public class InterviewDtos {
         private String fullName;
         private String email;
         private String role; // HR | TECH_EVALUATOR | ADMIN
+    }
+
+    // ── Phase status overview for a job ───────────────────────────────────────
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class JobPhasesStatusResponse {
+        private String jobId;
+        private String jobTitle;
+
+        private InterviewSummaryResponse rhInterview;
+        private InterviewSummaryResponse technicalInterview;
+        private InterviewSummaryResponse adminInterview;
+
+        /** True when RH is CLOSED → Technical can be configured */
+        private boolean canConfigureTechnical;
+        /** True when both RH and Technical are CLOSED → Admin can be configured */
+        private boolean canConfigureAdmin;
+
+        /** Earliest possible start for Technical (day after RH computed end, or today) */
+        private LocalDate earliestTechnicalStart;
+        /** Earliest possible start for Admin (day after Technical computed end, or today) */
+        private LocalDate earliestAdminStart;
+
+        /** Dates blocked for Technical (dates occupied by RH slots) */
+        private List<LocalDate> rhOccupiedDates;
+        /** Dates blocked for Admin (dates occupied by RH or Technical slots) */
+        private List<LocalDate> technicalOccupiedDates;
+    }
+
+    // ── Schedule suggestion ───────────────────────────────────────────────────
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class ScheduleSuggestionResponse {
+        private int         candidateCount;
+        private int         assigneeCount;
+        private int         durationMinutes;
+        private int         roundsPerDay;          // time slots available per day
+        private int         totalRoundsNeeded;     // ceil(candidateCount / assigneeCount)
+        private int         estimatedDaysNeeded;
+        private LocalDate   suggestedStartDate;
+        private LocalDate   suggestedEndDate;
+        private List<LocalDate> blockedDates;      // dates that cannot be used (from previous phase)
+    }
+
+    // ── Close phase request ───────────────────────────────────────────────────
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class ClosePhaseRequest {
+        /** Optional reason / comment for closing the phase */
+        private String reason;
+    }
+
+    // ── Candidate-facing slot view (no evaluation details) ────────────────────
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class CandidateSlotView {
+        private String    id;
+        private String    jobId;
+        private String    jobTitle;
+        private String    stageName;
+        private StageType stageType;
+        /** ISO datetime string */
+        private String    slotStart;
+        private String    slotEnd;
+        /** SCHEDULED | COMPLETED | CANCELLED | NO_SHOW */
+        private String    status;
+        /** PENDING | ACCEPTED | REJECTED */
+        private String    decision;
+        /** Name of the interviewer */
+        private String    assigneeName;
     }
 }

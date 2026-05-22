@@ -27,54 +27,53 @@ public class InterviewService {
     private final JobRepository                      jobRepository;
     private final UserRepository                     userRepository;
     private final ApplicationStageProgressRepository stageProgressRepository;
-    // Phase 2: unified TestSessionRepository (was TechnicalSessionRepository)
-    // Field retained for potential future use but currently unused in this service.
+    private final WorkflowStageRepository            workflowStageRepository;
     private final TestSessionRepository              testSessionRepository;
     private final ObjectMapper                       objectMapper;
 
-    // ── Create interviews when a job is created ───────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // CREATE
+    // ══════════════════════════════════════════════════════════════════════════
 
     @Transactional
-public void createInterviewsForJob(Job job) {
-    if (job.getWorkflowStages() == null) return;
+    public void createInterviewsForJob(Job job) {
+        if (job.getWorkflowStages() == null) return;
 
-    for (WorkflowStage stage : job.getWorkflowStages()) {
-        StageType type = stage.getStageType();
-        if (type == null) continue;
+        for (WorkflowStage stage : job.getWorkflowStages()) {
+            StageType type = stage.getStageType();
+            if (type == null) continue;
 
-        boolean isInterview = type == StageType.RH_INTERVIEW
-                || type == StageType.TECHNICAL_INTERVIEW
-                || type == StageType.ADMIN_INTERVIEW;
-        if (!isInterview) continue;
+            boolean isInterview = type == StageType.RH_INTERVIEW
+                    || type == StageType.TECHNICAL_INTERVIEW
+                    || type == StageType.ADMIN_INTERVIEW;
+            if (!isInterview) continue;
 
-        if (interviewRepository.findByWorkflowStageId(stage.getId()).isPresent()) continue;
+            if (interviewRepository.findByWorkflowStageId(stage.getId()).isPresent()) continue;
 
-        // ✅ Log what we're getting from the stage
-        log.info("Creating interview for stage: name={}, assigneeId={}, assignedTo={}", 
-            stage.getName(), stage.getAssigneeId(), stage.getAssignedTo());
+            log.info("Creating interview for stage: name={}, assigneeId={}", stage.getName(), stage.getAssigneeId());
 
-        Interview interview = Interview.builder()
-                .jobId(job.getId())
-                .jobTitle(job.getTitle())
-                .jobDepartment(job.getDepartment())
-                .workflowStageId(stage.getId())
-                .stageName(stage.getName())
-                .stageType(type)
-                .assigneeId(stage.getAssigneeId())   // ← could be null!
-                .assigneeName(stage.getAssignedTo())
-                .durationMinutes(60)
-                .interviewsPerDay(4)
-                .dayStartTime("09:00")
-                .dayEndTime("18:00")
-                .gridConfigured(false)
-                .scheduleConfigured(false)
-                .slotsGenerated(false)
-                .build();
+            Interview interview = Interview.builder()
+                    .jobId(job.getId())
+                    .jobTitle(job.getTitle())
+                    .jobDepartment(job.getDepartment())
+                    .workflowStageId(stage.getId())
+                    .stageName(stage.getName())
+                    .stageType(type)
+                    .assigneeId(stage.getAssigneeId())
+                    .assigneeName(stage.getAssignedTo())
+                    .durationMinutes(60)
+                    .interviewsPerDay(4)
+                    .dayStartTime("09:00")
+                    .dayEndTime("18:00")
+                    .gridConfigured(false)
+                    .scheduleConfigured(false)
+                    .slotsGenerated(false)
+                    .phaseStatus("NOT_CONFIGURED")
+                    .build();
 
-        interviewRepository.save(interview);
+            interviewRepository.save(interview);
+        }
     }
-}
-    // ── Bootstrap: create missing interviews for all existing jobs ────────────
 
     @Transactional
     public void bootstrapInterviewsForAllJobs() {
@@ -85,44 +84,111 @@ public void createInterviewsForJob(Job job) {
         log.info("Bootstrap: interviews checked/created for {} jobs", jobs.size());
     }
 
-    // ── Get interviews for a user ─────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // READ
+    // ══════════════════════════════════════════════════════════════════════════
 
     public List<InterviewSummaryResponse> getInterviewsForUser(String userId) {
-        
-        log.info(">>> userId reçu : '{}'", userId);
-        log.info(">>> userId length : {}", userId.length());
-        
-        interviewRepository.findAll().forEach(i -> {
-            log.info(">>> interview assigneeId : '{}' length:{}", 
-                i.getAssigneeId(), 
-                i.getAssigneeId() != null ? i.getAssigneeId().length() : -1);
-            log.info(">>> equals: {}", userId.equals(i.getAssigneeId()));
-        });
-        
         List<Interview> result = interviewRepository.findByAssigneeId(userId);
-        log.info(">>> findByAssigneeId result size: {}", result.size());
-        
         return result.stream().map(this::toSummary).collect(Collectors.toList());
     }
 
-    // ── Configure schedule + evaluation grid ──────────────────────────────────
+    @Transactional(readOnly = true)
+    public InterviewSummaryResponse getInterview(String interviewId) {
+        return toSummary(findInterview(interviewId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<SlotResponse> getSlots(String interviewId) {
+        return slotRepository.findByInterviewId(interviewId).stream()
+                .sorted(Comparator.comparing(InterviewSlot::getSlotStart))
+                .map(this::toSlotResponse)
+                .collect(Collectors.toList());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PHASE STATUS OVERVIEW
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Returns the status of all 3 interview phases for a given job,
+     * including blocked dates and next-phase eligibility.
+     */
+    @Transactional(readOnly = true)
+    public JobPhasesStatusResponse getJobPhases(String jobId) {
+        Job job = jobRepository.findById(jobId)
+                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
+
+        List<Interview> rhList   = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
+        List<Interview> techList = interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW);
+        List<Interview> admList  = interviewRepository.findByJobIdAndStageType(jobId, StageType.ADMIN_INTERVIEW);
+
+        Interview rh   = rhList.isEmpty()   ? null : rhList.get(0);
+        Interview tech = techList.isEmpty() ? null : techList.get(0);
+        Interview adm  = admList.isEmpty()  ? null : admList.get(0);
+
+        boolean rhClosed   = rh   != null && "CLOSED".equals(rh.getPhaseStatus());
+        boolean techClosed = tech != null && "CLOSED".equals(tech.getPhaseStatus());
+
+        // Occupied dates from RH
+        List<LocalDate> rhOccupied = new ArrayList<>();
+        if (rh != null) {
+            rhOccupied = slotRepository.findOccupiedDatesByInterviewIds(List.of(rh.getId()));
+        }
+
+        // Occupied dates from Technical
+        List<LocalDate> techOccupied = new ArrayList<>();
+        if (tech != null) {
+            techOccupied = slotRepository.findOccupiedDatesByInterviewIds(List.of(tech.getId()));
+        }
+
+        // Earliest start for Technical = day after RH computed end (or today)
+        LocalDate earliestTech = LocalDate.now();
+        if (rh != null && rh.getComputedEndDateTime() != null) {
+            earliestTech = rh.getComputedEndDateTime().toLocalDate().plusDays(1);
+        }
+
+        // Earliest start for Admin = day after Technical computed end
+        LocalDate earliestAdm = earliestTech;
+        if (tech != null && tech.getComputedEndDateTime() != null) {
+            earliestAdm = tech.getComputedEndDateTime().toLocalDate().plusDays(1);
+        }
+
+        return JobPhasesStatusResponse.builder()
+                .jobId(jobId)
+                .jobTitle(job.getTitle())
+                .rhInterview(rh   != null ? toSummary(rh)   : null)
+                .technicalInterview(tech != null ? toSummary(tech) : null)
+                .adminInterview(adm  != null ? toSummary(adm)  : null)
+                .canConfigureTechnical(rhClosed)
+                .canConfigureAdmin(rhClosed && techClosed)
+                .earliestTechnicalStart(earliestTech)
+                .earliestAdminStart(earliestAdm)
+                .rhOccupiedDates(rhOccupied)
+                .technicalOccupiedDates(techOccupied)
+                .build();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // CONFIGURE
+    // ══════════════════════════════════════════════════════════════════════════
 
     @Transactional
     public InterviewSummaryResponse configure(String interviewId, InterviewConfigRequest req) {
         Interview interview = findInterview(interviewId);
 
-        // Basic schedule fields
+        // Validate phase prerequisites before allowing configuration
+        validatePhasePrerequisites(interview);
+
         interview.setStartDate(req.getStartDate());
         interview.setEndDate(req.getEndDate());
         interview.setDurationMinutes(req.getDurationMinutes() != null ? req.getDurationMinutes() : 60);
         interview.setInterviewsPerDay(req.getInterviewsPerDay() != null ? req.getInterviewsPerDay() : 4);
         interview.setScheduleConfigured(true);
 
-        // Day working hours
         if (req.getDayStartTime() != null) interview.setDayStartTime(req.getDayStartTime());
         if (req.getDayEndTime()   != null) interview.setDayEndTime(req.getDayEndTime());
 
-        // Excluded time ranges — stored as JSON array of "HH:mm-HH:mm" strings
         if (req.getExcludedHours() != null) {
             try {
                 interview.setExcludedHoursJson(objectMapper.writeValueAsString(req.getExcludedHours()));
@@ -131,11 +197,9 @@ public void createInterviewsForJob(Job job) {
             }
         }
 
-        // Multi-assignee IDs
         if (req.getAssigneeIds() != null && !req.getAssigneeIds().isEmpty()) {
             try {
                 interview.setAssigneeIdsJson(objectMapper.writeValueAsString(req.getAssigneeIds()));
-                // Keep primary assignee as first in list (backward compat)
                 String firstId = req.getAssigneeIds().get(0);
                 userRepository.findById(firstId).ifPresent(u -> {
                     interview.setAssigneeId(firstId);
@@ -146,7 +210,6 @@ public void createInterviewsForJob(Job job) {
             }
         }
 
-        // Evaluation grid
         if (req.getEvaluationGrid() != null && !req.getEvaluationGrid().isEmpty()) {
             try {
                 interview.setEvaluationGridJson(objectMapper.writeValueAsString(req.getEvaluationGrid()));
@@ -156,12 +219,24 @@ public void createInterviewsForJob(Job job) {
             }
         }
 
+        if ("NOT_CONFIGURED".equals(interview.getPhaseStatus())) {
+            interview.setPhaseStatus("CONFIGURED");
+        }
+
         interviewRepository.save(interview);
         return toSummary(interview);
     }
 
-    // ── Generate slots (algorithm) ────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // GENERATE SLOTS — core parallel scheduling algorithm
+    // ══════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Generates slots with full parallel support:
+     * - RH_INTERVIEW:         X HR managers interview simultaneously → X slots per time point
+     * - TECHNICAL_INTERVIEW:  Must start after RH closed; no RH date reuse; distributed across N evaluators
+     * - ADMIN_INTERVIEW:      Must start after both RH and Technical closed; only Technical-accepted candidates
+     */
     @Transactional
     public List<SlotResponse> generateSlots(String interviewId) {
         Interview interview = findInterview(interviewId);
@@ -170,109 +245,212 @@ public void createInterviewsForJob(Job job) {
             throw new RuntimeException("Interview schedule not configured yet");
         }
 
+        // Phase-specific prerequisites
+        validateGenerateSlotsPrerequisites(interview);
+
         // Delete previous slots
         slotRepository.deleteAll(slotRepository.findByInterviewId(interviewId));
 
-        // Get eligible candidates
+        // Candidates eligible for this phase
         List<String> candidateIds = getEligibleCandidates(interview);
         if (candidateIds.isEmpty()) {
             log.info("No eligible candidates for interview {}", interviewId);
+            interview.setSlotsGenerated(true);
+            interview.setPhaseStatus("IN_PROGRESS");
+            interviewRepository.save(interview);
             return List.of();
         }
 
-        // Parse config
-        List<String> excludedRanges = parseJsonList(interview.getExcludedHoursJson());
-        List<String> assigneeIds    = parseJsonList(interview.getAssigneeIdsJson());
-
-        // Fallback to primary assignee if none configured
+        // Assignees (HR managers / evaluators / admins)
+        List<String> assigneeIds = parseJsonList(interview.getAssigneeIdsJson());
         if (assigneeIds.isEmpty() && interview.getAssigneeId() != null) {
             assigneeIds = List.of(interview.getAssigneeId());
         }
+        int parallelism = assigneeIds.isEmpty() ? 1 : assigneeIds.size();
 
-        int duration = interview.getDurationMinutes() != null ? interview.getDurationMinutes() : 60;
-        int perDay   = interview.getInterviewsPerDay() != null ? interview.getInterviewsPerDay() : 4;
-
+        // Config
+        List<String> excludedRanges = parseJsonList(interview.getExcludedHoursJson());
+        int duration  = interview.getDurationMinutes() != null ? interview.getDurationMinutes() : 60;
+        int perDay    = interview.getInterviewsPerDay() != null ? interview.getInterviewsPerDay() : 4;
         String dayStart = interview.getDayStartTime() != null ? interview.getDayStartTime() : "09:00";
         String dayEnd   = interview.getDayEndTime()   != null ? interview.getDayEndTime()   : "18:00";
 
-        // Generate available time slots
-        List<LocalDateTime> availableSlots = generateTimeSlots(
+        // Dates that are blocked by a previous phase
+        Set<LocalDate> blockedDates = getBlockedDatesForPhase(interview);
+
+        // Generate ordered time slots (one per "round"; each round fills all parallel slots)
+        List<LocalDateTime> rounds = generateRounds(
                 interview.getStartDate(), interview.getEndDate(),
-                duration, perDay,
-                dayStart, dayEnd,
-                excludedRanges
-        );
+                duration, perDay, dayStart, dayEnd,
+                excludedRanges, blockedDates);
 
+        // Preload assignee names
+        Map<String, String> assigneeNames = loadAssigneeNames(assigneeIds);
+
+        // Build slots: for each round, assign up to `parallelism` candidates
         List<InterviewSlot> slots = new ArrayList<>();
-        int slotIdx    = 0;
-        int assigneeIdx = 0;
+        int candidateIdx = 0;
 
-        for (String candidateId : candidateIds) {
-            if (slotIdx >= availableSlots.size()) break;
+        outer:
+        for (LocalDateTime roundStart : rounds) {
+            LocalDateTime roundEnd = roundStart.plusMinutes(duration);
+            for (int i = 0; i < parallelism; i++) {
+                if (candidateIdx >= candidateIds.size()) break outer;
 
-            User user = userRepository.findById(candidateId).orElse(null);
-            if (user == null) continue;
+                String candidateId = candidateIds.get(candidateIdx++);
+                User candidate = userRepository.findById(candidateId).orElse(null);
+                if (candidate == null) continue;
 
-            // Round-robin over assignees
-            String assigneeId   = assigneeIds.isEmpty() ? null : assigneeIds.get(assigneeIdx % assigneeIds.size());
-            String assigneeName = null;
-            if (assigneeId != null) {
-                User assignee = userRepository.findById(assigneeId).orElse(null);
-                if (assignee != null) assigneeName = assignee.getFirstName() + " " + assignee.getLastName();
+                String assigneeId   = assigneeIds.get(i % parallelism);
+                String assigneeName = assigneeNames.getOrDefault(assigneeId, "");
+
+                InterviewSlot slot = InterviewSlot.builder()
+                        .interviewId(interviewId)
+                        .candidateId(candidateId)
+                        .candidateName(candidate.getFirstName() + " " + candidate.getLastName())
+                        .candidateEmail(candidate.getEmail())
+                        .assigneeId(assigneeId)
+                        .assigneeName(assigneeName)
+                        .slotStart(roundStart)
+                        .slotEnd(roundEnd)
+                        .status(InterviewSlot.SlotStatus.SCHEDULED)
+                        .decision("PENDING")
+                        .build();
+
+                slots.add(slotRepository.save(slot));
             }
-            assigneeIdx++;
-
-            LocalDateTime start = availableSlots.get(slotIdx++);
-            LocalDateTime end   = start.plusMinutes(duration);
-
-            InterviewSlot slot = InterviewSlot.builder()
-                    .interviewId(interviewId)
-                    .candidateId(candidateId)
-                    .candidateName(user.getFirstName() + " " + user.getLastName())
-                    .candidateEmail(user.getEmail())
-                    .assigneeId(assigneeId)
-                    .assigneeName(assigneeName)
-                    .slotStart(start)
-                    .slotEnd(end)
-                    .status(InterviewSlot.SlotStatus.SCHEDULED)
-                    .decision("PENDING")
-                    .build();
-
-            slots.add(slotRepository.save(slot));
         }
 
+        // Compute phase end = last slot end
+        LocalDateTime phaseEnd = slots.stream()
+                .map(InterviewSlot::getSlotEnd)
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
+
         interview.setSlotsGenerated(true);
+        interview.setPhaseStatus("IN_PROGRESS");
+        interview.setComputedEndDateTime(phaseEnd);
         interviewRepository.save(interview);
 
-        log.info("Generated {} slots for interview {} (assignees: {})", slots.size(), interviewId, assigneeIds.size());
+        log.info("Generated {} slots for interview {} (parallelism={}, phases={})",
+                slots.size(), interviewId, parallelism, interview.getStageType());
         return slots.stream().map(this::toSlotResponse).collect(Collectors.toList());
     }
 
-    // ── Get slots ─────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // SCHEDULE SUGGESTION
+    // ══════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Auto-calculates a suggested schedule for an interview phase,
+     * given the number of candidates and assignees.
+     */
     @Transactional(readOnly = true)
-    public List<SlotResponse> getSlots(String interviewId) {
-        return slotRepository.findByInterviewId(interviewId).stream()
-                .sorted(Comparator.comparing(InterviewSlot::getSlotStart))
-                .map(this::toSlotResponse)
-                .collect(Collectors.toList());
+    public ScheduleSuggestionResponse suggestSchedule(String interviewId, LocalDate desiredStart) {
+        Interview interview = findInterview(interviewId);
+
+        int candidateCount = getEligibleCandidates(interview).size();
+        List<String> assigneeIds = parseJsonList(interview.getAssigneeIdsJson());
+        if (assigneeIds.isEmpty() && interview.getAssigneeId() != null) {
+            assigneeIds = List.of(interview.getAssigneeId());
+        }
+        int assigneeCount = assigneeIds.isEmpty() ? 1 : assigneeIds.size();
+
+        int duration    = interview.getDurationMinutes() != null ? interview.getDurationMinutes() : 60;
+        int maxPerDay   = interview.getInterviewsPerDay() != null ? interview.getInterviewsPerDay() : 4;
+        String dayStart = interview.getDayStartTime() != null ? interview.getDayStartTime() : "09:00";
+        String dayEnd   = interview.getDayEndTime()   != null ? interview.getDayEndTime()   : "18:00";
+        List<String> excludedRanges = parseJsonList(interview.getExcludedHoursJson());
+
+        // Calculate working minutes per day minus excluded
+        int workingMinutes = computeWorkingMinutesPerDay(dayStart, dayEnd, excludedRanges);
+        int roundsPerDay   = Math.min(workingMinutes / duration, maxPerDay);
+        if (roundsPerDay <= 0) roundsPerDay = 1;
+
+        // Total rounds = ceil(candidates / parallelism)
+        int totalRounds = (int) Math.ceil((double) candidateCount / assigneeCount);
+
+        // Days needed = ceil(rounds / rounds_per_day), skipping weekends
+        int daysNeeded = (int) Math.ceil((double) totalRounds / roundsPerDay);
+
+        // Adjust for weekends
+        int actualCalendarDays = countCalendarDaysNeeded(daysNeeded);
+
+        // Blocked dates from previous phase
+        Set<LocalDate> blockedDates = getBlockedDatesForPhase(interview);
+
+        // Find the actual start date (respecting phase constraints)
+        LocalDate startDate = desiredStart != null ? desiredStart : LocalDate.now();
+
+        // For Technical: must be after RH end
+        if (interview.getStageType() == StageType.TECHNICAL_INTERVIEW) {
+            List<Interview> rhList = interviewRepository.findByJobIdAndStageType(
+                    interview.getJobId(), StageType.RH_INTERVIEW);
+            if (!rhList.isEmpty() && rhList.get(0).getComputedEndDateTime() != null) {
+                LocalDate minStart = rhList.get(0).getComputedEndDateTime().toLocalDate().plusDays(1);
+                if (startDate.isBefore(minStart)) startDate = minStart;
+            }
+        }
+
+        // For Admin: must be after Technical end
+        if (interview.getStageType() == StageType.ADMIN_INTERVIEW) {
+            List<Interview> techList = interviewRepository.findByJobIdAndStageType(
+                    interview.getJobId(), StageType.TECHNICAL_INTERVIEW);
+            if (!techList.isEmpty() && techList.get(0).getComputedEndDateTime() != null) {
+                LocalDate minStart = techList.get(0).getComputedEndDateTime().toLocalDate().plusDays(1);
+                if (startDate.isBefore(minStart)) startDate = minStart;
+            }
+        }
+
+        LocalDate suggestedEnd = computeEndDate(startDate, daysNeeded, blockedDates);
+
+        return ScheduleSuggestionResponse.builder()
+                .candidateCount(candidateCount)
+                .assigneeCount(assigneeCount)
+                .durationMinutes(duration)
+                .roundsPerDay(roundsPerDay)
+                .totalRoundsNeeded(totalRounds)
+                .estimatedDaysNeeded(actualCalendarDays)
+                .suggestedStartDate(startDate)
+                .suggestedEndDate(suggestedEnd)
+                .blockedDates(new ArrayList<>(blockedDates))
+                .build();
     }
 
-    
-    
-    
-    
-    
-    
-    
- // InterviewService.java — assure-toi que cette méthode existe
-    @Transactional(readOnly = true)
-    public InterviewSummaryResponse getInterview(String interviewId) {
-        return toSummary(findInterview(interviewId));
+    // ══════════════════════════════════════════════════════════════════════════
+    // CLOSE PHASE
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Closes a phase manually. This allows the next phase to be configured.
+     * - RH closure enables Technical configuration
+     * - Technical closure enables Admin configuration
+     */
+    @Transactional
+    public InterviewSummaryResponse closePhase(String interviewId, ClosePhaseRequest req) {
+        Interview interview = findInterview(interviewId);
+
+        if ("CLOSED".equals(interview.getPhaseStatus())) {
+            throw new RuntimeException("Phase already closed");
+        }
+
+        // For Admin: both RH and Technical must be closed first
+        if (interview.getStageType() == StageType.ADMIN_INTERVIEW) {
+            ensurePreviousPhasesClosedForAdmin(interview.getJobId());
+        }
+
+        interview.setPhaseStatus("CLOSED");
+        interviewRepository.save(interview);
+
+        log.info("Phase CLOSED: interview={}, type={}, reason={}",
+                interviewId, interview.getStageType(), req != null ? req.getReason() : "");
+        return toSummary(interview);
     }
-    
-    
-    // ── Submit evaluation ─────────────────────────────────────────────────────
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SUBMIT EVALUATION
+    // ══════════════════════════════════════════════════════════════════════════
 
     @Transactional
     public SlotResponse submitEvaluation(String slotId, EvaluationSubmitRequest req) {
@@ -290,90 +468,264 @@ public void createInterviewsForJob(Job job) {
         slot.setDecision(req.getDecision());
         slot.setStatus(InterviewSlot.SlotStatus.COMPLETED);
 
+        String jobId = findInterview(slot.getInterviewId()).getJobId();
+
         if ("ACCEPTED".equals(req.getDecision())) {
-            advanceStageProgress(slot.getCandidateId(), findInterview(slot.getInterviewId()).getJobId());
+            advanceStageProgress(slot.getCandidateId(), jobId);
         } else if ("REJECTED".equals(req.getDecision())) {
-            rejectStageProgress(slot.getCandidateId(), findInterview(slot.getInterviewId()).getJobId());
+            rejectStageProgress(slot.getCandidateId(), jobId);
         }
+
+        // Auto-close phase if all scheduled slots are now evaluated
+        autoClosePhaseIfComplete(slot.getInterviewId());
 
         return toSlotResponse(slotRepository.save(slot));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // ALGORITHM: generate time slots
+    // CANDIDATE VIEW — slots without evaluation details
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Generates available LocalDateTime slots between startDate and endDate,
-     * respecting:
-     *  - dayStartTime / dayEndTime (working hours)
-     *  - durationMinutes (slot length)
-     *  - perDay (max slots per working day)
-     *  - excludedRanges (list of "HH:mm-HH:mm" strings to skip)
-     *  - weekends are skipped
+     * Returns all interview slots assigned to a candidate,
+     * enriched with job/stage context but WITHOUT evaluation grid or scores.
      */
-    private List<LocalDateTime> generateTimeSlots(
-            LocalDate start,
-            LocalDate end,
-            int durationMinutes,
-            int perDay,
-            String dayStartStr,
-            String dayEndStr,
-            List<String> excludedRanges) {
+    @Transactional(readOnly = true)
+    public List<CandidateSlotView> getCandidateSlots(String candidateId) {
+        return slotRepository.findByCandidateId(candidateId).stream()
+                .sorted(Comparator.comparing(
+                        s -> s.getSlotStart() != null ? s.getSlotStart() : LocalDateTime.MIN))
+                .map(slot -> {
+                    Interview interview = interviewRepository.findById(slot.getInterviewId()).orElse(null);
+                    return CandidateSlotView.builder()
+                            .id(slot.getId())
+                            .jobId(interview != null ? interview.getJobId() : null)
+                            .jobTitle(interview != null ? interview.getJobTitle() : null)
+                            .stageName(interview != null ? interview.getStageName() : null)
+                            .stageType(interview != null ? interview.getStageType() : null)
+                            .slotStart(slot.getSlotStart() != null ? slot.getSlotStart().toString() : null)
+                            .slotEnd(slot.getSlotEnd() != null ? slot.getSlotEnd().toString() : null)
+                            .status(slot.getStatus() != null ? slot.getStatus().name() : null)
+                            .decision(slot.getDecision())
+                            .assigneeName(slot.getAssigneeName())
+                            .build();
+                })
+                .collect(Collectors.toList());
+    }
 
-        List<LocalDateTime> slots     = new ArrayList<>();
-        List<LocalTime[]>   excluded  = parseExcludedRanges(excludedRanges);
-        LocalTime            dayStart  = parseTime(dayStartStr, LocalTime.of(9, 0));
-        LocalTime            dayEnd    = parseTime(dayEndStr,   LocalTime.of(18, 0));
+    @Transactional
+    public void deleteInterviewsForJob(Job job) {
+        interviewRepository.deleteAllByJobId(job.getId());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PHASE VALIDATION LOGIC
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Before configuring an interview, validates that the previous phase is CLOSED.
+     * RH: no prerequisite
+     * Technical: RH must be CLOSED
+     * Admin: both RH and Technical must be CLOSED
+     */
+    private void validatePhasePrerequisites(Interview interview) {
+        String jobId = interview.getJobId();
+        StageType type = interview.getStageType();
+
+        if (type == StageType.TECHNICAL_INTERVIEW) {
+            List<Interview> rhList = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
+            if (!rhList.isEmpty() && !"CLOSED".equals(rhList.get(0).getPhaseStatus())) {
+                throw new RuntimeException(
+                        "Cannot configure Technical interview: RH interview phase is not CLOSED yet. " +
+                        "Current status: " + rhList.get(0).getPhaseStatus());
+            }
+        }
+
+        if (type == StageType.ADMIN_INTERVIEW) {
+            ensurePreviousPhasesClosedForAdmin(jobId);
+        }
+    }
+
+    /**
+     * Checks that all preceding TEST stages (RH_TEST, TECHNICAL_TEST) in the workflow
+     * have no candidates still PENDING or IN_PROGRESS.
+     * This ensures the test period is finished before scheduling interviews.
+     */
+    private void validatePrecedingTestsCompleted(Interview interview) {
+        List<WorkflowStage> allStages = workflowStageRepository.findByJobId(interview.getJobId())
+                .stream()
+                .filter(s -> s.getStageOrder() != null && s.getStageType() != null)
+                .sorted(Comparator.comparing(WorkflowStage::getStageOrder))
+                .collect(Collectors.toList());
+
+        WorkflowStage thisStage = allStages.stream()
+                .filter(s -> s.getId().equals(interview.getWorkflowStageId()))
+                .findFirst().orElse(null);
+        if (thisStage == null) return;
+
+        List<StageType> testTypes = List.of(StageType.RH_TEST, StageType.TECHNICAL_TEST);
+
+        for (WorkflowStage stage : allStages) {
+            if (stage.getStageOrder() >= thisStage.getStageOrder()) break;
+            if (!testTypes.contains(stage.getStageType())) continue;
+
+            long activeCount = stageProgressRepository
+                    .findByJobIdAndStageType(interview.getJobId(), stage.getStageType().name())
+                    .stream()
+                    .filter(p -> p.getStatus() == StageProgressStatus.IN_PROGRESS
+                              || p.getStatus() == StageProgressStatus.PENDING)
+                    .count();
+
+            if (activeCount > 0) {
+                throw new RuntimeException(
+                        "Cannot generate interview slots: the test phase '" + stage.getName() +
+                        "' still has " + activeCount + " candidate(s) in progress or pending. " +
+                        "All tests must be completed or rejected before scheduling interviews.");
+            }
+        }
+    }
+
+    private void ensurePreviousPhasesClosedForAdmin(String jobId) {
+        List<Interview> rhList   = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
+        List<Interview> techList = interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW);
+
+        boolean rhOk   = rhList.isEmpty()   || "CLOSED".equals(rhList.get(0).getPhaseStatus());
+        boolean techOk = techList.isEmpty() || "CLOSED".equals(techList.get(0).getPhaseStatus());
+
+        if (!rhOk) {
+            throw new RuntimeException("Cannot proceed to Admin interview: RH phase is not CLOSED");
+        }
+        if (!techOk) {
+            throw new RuntimeException("Cannot proceed to Admin interview: Technical phase is not CLOSED");
+        }
+    }
+
+    /**
+     * Additional prerequisites specifically before generating slots.
+     * For Technical: validates that startDate does not fall on any RH-occupied date.
+     * For Admin: validates that startDate does not fall on any RH or Technical-occupied date.
+     * Also validates that all preceding TEST stages are completed.
+     */
+    private void validateGenerateSlotsPrerequisites(Interview interview) {
+        // Configuration must exist
+        validatePhasePrerequisites(interview);
+
+        // Preceding tests must be done
+        validatePrecedingTestsCompleted(interview);
+
+        String jobId = interview.getJobId();
+        LocalDate startDate = interview.getStartDate();
+
+        if (interview.getStageType() == StageType.TECHNICAL_INTERVIEW) {
+            // Start date must be after RH computed end
+            List<Interview> rhList = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
+            if (!rhList.isEmpty()) {
+                Interview rh = rhList.get(0);
+                if (rh.getComputedEndDateTime() != null) {
+                    LocalDate rhEndDate = rh.getComputedEndDateTime().toLocalDate();
+                    if (!startDate.isAfter(rhEndDate)) {
+                        throw new RuntimeException(
+                                "Technical interview cannot start on " + startDate +
+                                " — RH phase ends on " + rhEndDate + ". Choose a start date after " + rhEndDate);
+                    }
+                }
+
+                // Check no Technical date overlaps with RH dates
+                List<LocalDate> rhDates = slotRepository.findOccupiedDatesByInterviewIds(
+                        List.of(rh.getId()));
+                if (startDate != null && rhDates.contains(startDate)) {
+                    throw new RuntimeException(
+                            "Date " + startDate + " is already used by the RH interview phase");
+                }
+            }
+        }
+
+        if (interview.getStageType() == StageType.ADMIN_INTERVIEW) {
+            List<Interview> rhList   = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
+            List<Interview> techList = interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW);
+
+            // Start date after Technical end
+            if (!techList.isEmpty() && techList.get(0).getComputedEndDateTime() != null) {
+                LocalDate techEnd = techList.get(0).getComputedEndDateTime().toLocalDate();
+                if (!startDate.isAfter(techEnd)) {
+                    throw new RuntimeException(
+                            "Admin interview cannot start on " + startDate +
+                            " — Technical phase ends on " + techEnd);
+                }
+            }
+
+            // No overlap with RH or Technical dates
+            List<String> previousIds = new ArrayList<>();
+            rhList.forEach(i -> previousIds.add(i.getId()));
+            techList.forEach(i -> previousIds.add(i.getId()));
+
+            if (!previousIds.isEmpty()) {
+                List<LocalDate> occupied = slotRepository.findOccupiedDatesByInterviewIds(previousIds);
+                if (occupied.contains(startDate)) {
+                    throw new RuntimeException(
+                            "Date " + startDate + " is already used by a previous interview phase");
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SLOT GENERATION ALGORITHM
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Generates ordered LocalDateTime "rounds".
+     * Each round corresponds to one time slot during which all assignees can interview simultaneously.
+     * Blocked dates (from previous phases) are skipped entirely.
+     */
+    private List<LocalDateTime> generateRounds(
+            LocalDate start, LocalDate end,
+            int durationMinutes, int maxRoundsPerDay,
+            String dayStartStr, String dayEndStr,
+            List<String> excludedRanges,
+            Set<LocalDate> blockedDates) {
+
+        List<LocalDateTime> rounds   = new ArrayList<>();
+        List<LocalTime[]>   excluded = parseExcludedRanges(excludedRanges);
+        LocalTime dayStart = parseTime(dayStartStr, LocalTime.of(9, 0));
+        LocalTime dayEnd   = parseTime(dayEndStr,   LocalTime.of(18, 0));
 
         LocalDate current = start;
-
         while (!current.isAfter(end)) {
             DayOfWeek dow = current.getDayOfWeek();
 
             // Skip weekends
-            if (dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY) {
+            boolean isWeekend = dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY;
+            // Skip dates occupied by a previous phase
+            boolean isBlocked = blockedDates.contains(current);
+
+            if (!isWeekend && !isBlocked) {
                 LocalTime time         = dayStart;
-                int       slotsThisDay = 0;
+                int       roundsToday  = 0;
 
-                while (slotsThisDay < perDay) {
+                while (roundsToday < maxRoundsPerDay) {
                     LocalTime slotEnd = time.plusMinutes(durationMinutes);
-
-                    // Stop if slot would exceed day end
                     if (slotEnd.isAfter(dayEnd)) break;
 
-                    // Check if this slot overlaps any excluded range
                     if (!overlapsExcluded(time, slotEnd, excluded)) {
-                        slots.add(LocalDateTime.of(current, time));
-                        slotsThisDay++;
+                        rounds.add(LocalDateTime.of(current, time));
+                        roundsToday++;
                     }
-
-                    time = slotEnd; // advance to next possible slot
+                    time = slotEnd;
                 }
             }
             current = current.plusDays(1);
         }
-        return slots;
+        return rounds;
     }
 
-    /**
-     * Returns true if [slotStart, slotEnd) overlaps any excluded [from, to) range.
-     */
     private boolean overlapsExcluded(LocalTime slotStart, LocalTime slotEnd, List<LocalTime[]> excluded) {
         for (LocalTime[] range : excluded) {
-            LocalTime exFrom = range[0];
-            LocalTime exTo   = range[1];
-            // Overlap condition: slotStart < exTo AND slotEnd > exFrom
-            if (slotStart.isBefore(exTo) && slotEnd.isAfter(exFrom)) {
-                return true;
-            }
+            if (slotStart.isBefore(range[1]) && slotEnd.isAfter(range[0])) return true;
         }
         return false;
     }
 
-    /**
-     * Parses a list of "HH:mm-HH:mm" strings into LocalTime pairs.
-     */
     private List<LocalTime[]> parseExcludedRanges(List<String> ranges) {
         List<LocalTime[]> result = new ArrayList<>();
         for (String r : ranges) {
@@ -383,11 +735,9 @@ public void createInterviewsForJob(Job job) {
             try {
                 LocalTime from = LocalTime.parse(parts[0].trim());
                 LocalTime to   = LocalTime.parse(parts[1].trim());
-                if (from.isBefore(to)) {
-                    result.add(new LocalTime[]{from, to});
-                }
+                if (from.isBefore(to)) result.add(new LocalTime[]{from, to});
             } catch (Exception e) {
-                log.warn("Could not parse excluded range '{}': {}", r, e.getMessage());
+                log.warn("Cannot parse excluded range '{}': {}", r, e.getMessage());
             }
         }
         return result;
@@ -395,14 +745,12 @@ public void createInterviewsForJob(Job job) {
 
     private LocalTime parseTime(String hhmm, LocalTime fallback) {
         if (hhmm == null || hhmm.isBlank()) return fallback;
-        try {
-            return LocalTime.parse(hhmm);
-        } catch (Exception e) {
-            return fallback;
-        }
+        try { return LocalTime.parse(hhmm); } catch (Exception e) { return fallback; }
     }
 
-    // ── Eligible candidates ───────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // ELIGIBLE CANDIDATES
+    // ══════════════════════════════════════════════════════════════════════════
 
     private List<String> getEligibleCandidates(Interview interview) {
         List<ApplicationStageProgress> rows =
@@ -416,7 +764,52 @@ public void createInterviewsForJob(Job job) {
                 .collect(Collectors.toList());
     }
 
-    // ── Stage progress ────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // BLOCKED DATES HELPER
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Returns the set of dates that are blocked for a given phase
+     * (i.e., dates already occupied by a preceding phase's slots).
+     */
+    private Set<LocalDate> getBlockedDatesForPhase(Interview interview) {
+        String jobId = interview.getJobId();
+        List<String> previousIds = new ArrayList<>();
+
+        if (interview.getStageType() == StageType.TECHNICAL_INTERVIEW) {
+            interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW)
+                    .forEach(i -> previousIds.add(i.getId()));
+        } else if (interview.getStageType() == StageType.ADMIN_INTERVIEW) {
+            interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW)
+                    .forEach(i -> previousIds.add(i.getId()));
+            interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW)
+                    .forEach(i -> previousIds.add(i.getId()));
+        }
+
+        if (previousIds.isEmpty()) return Collections.emptySet();
+        return new HashSet<>(slotRepository.findOccupiedDatesByInterviewIds(previousIds));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // AUTO-CLOSE PHASE
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private void autoClosePhaseIfComplete(String interviewId) {
+        long remaining = slotRepository.countScheduledByInterviewId(interviewId);
+        if (remaining == 0) {
+            interviewRepository.findById(interviewId).ifPresent(i -> {
+                if (!"CLOSED".equals(i.getPhaseStatus())) {
+                    i.setPhaseStatus("CLOSED");
+                    interviewRepository.save(i);
+                    log.info("Auto-closed phase for interview {}", interviewId);
+                }
+            });
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // STAGE PROGRESS
+    // ══════════════════════════════════════════════════════════════════════════
 
     private void advanceStageProgress(String candidateId, String jobId) {
         List<ApplicationStageProgress> stages = stageProgressRepository
@@ -455,7 +848,51 @@ public void createInterviewsForJob(Job job) {
                 });
     }
 
-    // ── Mappers ───────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // SCHEDULE CALCULATION HELPERS
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private int computeWorkingMinutesPerDay(String dayStart, String dayEnd, List<String> excludedRanges) {
+        LocalTime start = parseTime(dayStart, LocalTime.of(9, 0));
+        LocalTime end   = parseTime(dayEnd,   LocalTime.of(18, 0));
+        int total = (int) Duration.between(start, end).toMinutes();
+
+        List<LocalTime[]> excluded = parseExcludedRanges(excludedRanges);
+        for (LocalTime[] range : excluded) {
+            LocalTime from = range[0].isBefore(start) ? start : range[0];
+            LocalTime to   = range[1].isAfter(end)    ? end   : range[1];
+            if (from.isBefore(to)) {
+                total -= (int) Duration.between(from, to).toMinutes();
+            }
+        }
+        return Math.max(total, 0);
+    }
+
+    /** Counts calendar days needed for `workingDays` working days (skipping weekends). */
+    private int countCalendarDaysNeeded(int workingDays) {
+        int weeks    = workingDays / 5;
+        int extra    = workingDays % 5;
+        return weeks * 7 + extra;
+    }
+
+    /** Returns the end date after `workingDaysNeeded` working days, skipping blocked dates. */
+    private LocalDate computeEndDate(LocalDate start, int workingDaysNeeded, Set<LocalDate> blockedDates) {
+        LocalDate current = start;
+        int used = 0;
+        while (used < workingDaysNeeded) {
+            if (current.getDayOfWeek() != DayOfWeek.SATURDAY
+                    && current.getDayOfWeek() != DayOfWeek.SUNDAY
+                    && !blockedDates.contains(current)) {
+                used++;
+            }
+            if (used < workingDaysNeeded) current = current.plusDays(1);
+        }
+        return current;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // MAPPERS
+    // ══════════════════════════════════════════════════════════════════════════
 
     private InterviewSummaryResponse toSummary(Interview i) {
         List<String>       excluded    = parseJsonList(i.getExcludedHoursJson());
@@ -464,6 +901,11 @@ public void createInterviewsForJob(Job job) {
 
         int total     = slotRepository.countByInterviewId(i.getId());
         int completed = slotRepository.countByInterviewIdAndStatus(i.getId(), InterviewSlot.SlotStatus.COMPLETED);
+
+        int eligible = 0;
+        try {
+            eligible = getEligibleCandidates(i).size();
+        } catch (Exception ignored) {}
 
         return InterviewSummaryResponse.builder()
                 .id(i.getId())
@@ -478,7 +920,7 @@ public void createInterviewsForJob(Job job) {
                 .startDate(i.getStartDate())
                 .endDate(i.getEndDate())
                 .dayStartTime(i.getDayStartTime() != null ? i.getDayStartTime() : "09:00")
-                .dayEndTime(i.getDayEndTime() != null ? i.getDayEndTime() : "18:00")
+                .dayEndTime(i.getDayEndTime()     != null ? i.getDayEndTime()   : "18:00")
                 .durationMinutes(i.getDurationMinutes())
                 .interviewsPerDay(i.getInterviewsPerDay())
                 .gridConfigured(i.getGridConfigured())
@@ -488,6 +930,9 @@ public void createInterviewsForJob(Job job) {
                 .completedInterviews(completed)
                 .excludedHours(excluded)
                 .assignees(assignees)
+                .phaseStatus(i.getPhaseStatus() != null ? i.getPhaseStatus() : "NOT_CONFIGURED")
+                .computedEndDateTime(i.getComputedEndDateTime())
+                .eligibleCandidates(eligible)
                 .build();
     }
 
@@ -508,10 +953,6 @@ public void createInterviewsForJob(Job job) {
                 .build();
     }
 
-    /**
-     * Resolves a list of user IDs into AssigneeDTO objects.
-     * Missing users are silently skipped.
-     */
     private List<AssigneeDTO> resolveAssignees(List<String> ids) {
         if (ids == null || ids.isEmpty()) return new ArrayList<>();
         return ids.stream()
@@ -525,13 +966,19 @@ public void createInterviewsForJob(Job job) {
                         .build())
                 .collect(Collectors.toList());
     }
-    @Transactional
-    public void deleteInterviewsForJob(Job job) {
-        interviewRepository.deleteAllByJobId(job.getId());
+
+    private Map<String, String> loadAssigneeNames(List<String> ids) {
+        Map<String, String> names = new HashMap<>();
+        for (String id : ids) {
+            userRepository.findById(id).ifPresent(u ->
+                    names.put(id, u.getFirstName() + " " + u.getLastName()));
+        }
+        return names;
     }
 
-
-    // ── JSON helpers ──────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // JSON HELPERS
+    // ══════════════════════════════════════════════════════════════════════════
 
     private List<String> parseJsonList(String json) {
         if (json == null || json.isBlank()) return new ArrayList<>();

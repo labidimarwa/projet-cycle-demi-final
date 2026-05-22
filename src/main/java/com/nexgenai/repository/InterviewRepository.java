@@ -16,6 +16,17 @@ public interface InterviewRepository extends JpaRepository<Interview, String> {
     Optional<Interview> findByWorkflowStageId(String workflowStageId);
     List<Interview> findByJobIdAndStageType(String jobId, StageType stageType);
     void deleteAllByJobId(String jobId);
+
     @Query("SELECT i FROM Interview i WHERE i.id = :interviewId")
     Optional<Interview> findByInterviewId(@Param("interviewId") String interviewId);
+
+    @Query("SELECT i FROM Interview i WHERE i.jobId = :jobId AND i.stageType IN :types")
+    List<Interview> findByJobIdAndStageTypeIn(
+            @Param("jobId") String jobId,
+            @Param("types") List<StageType> types);
+
+    @Query("SELECT i FROM Interview i WHERE i.jobId = :jobId AND i.phaseStatus = :status")
+    List<Interview> findByJobIdAndPhaseStatus(
+            @Param("jobId") String jobId,
+            @Param("status") String status);
 }

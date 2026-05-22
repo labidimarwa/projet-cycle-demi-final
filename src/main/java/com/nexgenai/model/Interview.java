@@ -104,6 +104,20 @@ public class Interview {
     @Column(name = "slots_generated")
     private Boolean slotsGenerated = false;
 
+    /**
+     * Phase lifecycle: NOT_CONFIGURED | CONFIGURED | IN_PROGRESS | CLOSED
+     * - CLOSED means this phase is done and the next phase can be configured
+     */
+    @Column(name = "phase_status", length = 30)
+    private String phaseStatus = "NOT_CONFIGURED";
+
+    /**
+     * Computed end date/time of this interview phase (last slot end).
+     * Set automatically when slots are generated.
+     */
+    @Column(name = "computed_end_date_time")
+    private LocalDateTime computedEndDateTime;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -119,6 +133,7 @@ public class Interview {
         if (slotsGenerated    == null) slotsGenerated    = false;
         if (dayStartTime      == null) dayStartTime      = "09:00";
         if (dayEndTime        == null) dayEndTime        = "18:00";
+        if (phaseStatus       == null) phaseStatus       = "NOT_CONFIGURED";
     }
 
     @PreUpdate
