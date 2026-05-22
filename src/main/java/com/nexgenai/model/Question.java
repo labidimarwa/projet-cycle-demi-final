@@ -2,6 +2,7 @@ package com.nexgenai.model;
 
 import com.nexgenai.config.IntegerListConverter;
 import com.nexgenai.config.QcmOptionListConverter;
+import com.nexgenai.config.StringListConverter;
 import com.nexgenai.config.TestCaseListConverter;
 import jakarta.persistence.*;
 import lombok.*;
@@ -132,6 +133,11 @@ public class Question {
     @Convert(converter = TestCaseListConverter.class)
     @Column(name = "test_cases", columnDefinition = "TEXT")
     private List<TestCase> testCases;
+
+    /** Allowed submission languages: python | javascript | java | c | cpp | go. */
+    @Convert(converter = StringListConverter.class)
+    @Column(name = "supported_langs", columnDefinition = "TEXT")
+    private List<String> supportedLangs;
 
     // ── QCM (JSON-backed) fields ──────────────────────────────────────────────
 

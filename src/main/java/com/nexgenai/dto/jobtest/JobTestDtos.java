@@ -85,6 +85,7 @@ public class JobTestDtos {
             private Double  timeLimit;
             private Integer memoryLimit;
             private List<TestCasePayload> testCases;
+            private List<String> supportedLangs;
 
             private String questionType;           // RADIO | CHECKBOX | LIKERT | RANKING
             private List<QcmOptionPayload> options;
@@ -135,6 +136,7 @@ public class JobTestDtos {
         private String name;
         private String description;
         private String status;
+        private String type;            // TECHNICAL | RH
         private int    themesCount;
         private int    questionsCount;
         private int    candidatesCount;
@@ -189,6 +191,7 @@ public class JobTestDtos {
         private Double  timeLimit;
         private Integer memoryLimit;
         private List<TestCaseResponse>  testCases;
+        private List<String>            supportedLangs;
 
         private String                  questionType;  // RADIO|CHECKBOX|LIKERT|RANKING
         private List<QcmOptionResponse> options;
@@ -208,6 +211,7 @@ public class JobTestDtos {
         private String  input;
         private String  output;
         private Integer points;
+        private Boolean visible;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor

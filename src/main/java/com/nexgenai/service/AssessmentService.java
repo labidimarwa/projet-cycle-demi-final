@@ -77,38 +77,26 @@ public class AssessmentService {
 
         for (Job job : jobs) {
             List<TestSummaryResponse> allTests = new ArrayList<>();
-            List<Assessment> assessments = assessmentRepository.findByJobId(job.getId());
 
-            // ── 1. Assessments already configured ─────────────────────────────
+            // ── Assessments filtrés directement par assigneeId ────────────────
+            List<Assessment> assessments = (evaluatorId != null)
+                ? assessmentRepository.findByJobIdAndAssigneeId(job.getId(), evaluatorId)
+                : assessmentRepository.findByJobId(job.getId());
+
+            if ("HR".equals(role)) {
+                assessments = assessments.stream()
+                    .filter(a -> a.getType() == AssessmentType.RH)
+                    .collect(Collectors.toList());
+            }
+
             for (Assessment a : assessments) {
-                WorkflowStage linkedStage = null;
+                String stageTypeName = null;
                 if (a.getWorkflowStageId() != null && job.getWorkflowStages() != null) {
-                    linkedStage = job.getWorkflowStages().stream()
+                    stageTypeName = job.getWorkflowStages().stream()
                         .filter(s -> s.getId().equals(a.getWorkflowStageId()))
+                        .map(s -> s.getStageType() != null ? s.getStageType().name() : null)
                         .findFirst().orElse(null);
                 }
-
-                if ("HR".equals(role)) {
-                    if (linkedStage == null) continue;
-                    if (linkedStage.getStageType() != StageType.RH_TEST) continue;
-                }
-
-                String effectiveAssigneeId = resolveAssigneeId(linkedStage, job);
-                if ("HR".equals(role) && linkedStage != null
-                        && linkedStage.getStageType() != StageType.RH_TEST) continue;
-
-                if (evaluatorId != null
-                        && effectiveAssigneeId != null
-                        && !evaluatorId.equals(effectiveAssigneeId)) continue;
-
-                if (evaluatorId != null
-                        && effectiveAssigneeId == null
-                        && a.getWorkflowStageId() != null) continue;
-
-                String stageTypeName = linkedStage != null && linkedStage.getStageType() != null
-                        ? linkedStage.getStageType().name() : null;
-
-                int candidatesCount = countCandidatesForAssessment(a.getId(), stageTypeName);
 
                 allTests.add(TestSummaryResponse.builder()
                     .id(a.getId())
@@ -117,53 +105,12 @@ public class AssessmentService {
                     .status(a.getStatus().name())
                     .themesCount(a.getThemes() != null ? a.getThemes().size() : 0)
                     .questionsCount(countAllQuestions(a))
-                    .candidatesCount(candidatesCount)
+                    .candidatesCount(testSessionRepository.countByAssessmentId(a.getId()))
                     .completionRate(0)
                     .createdAt(a.getCreatedAt() != null ? a.getCreatedAt().toString() : null)
                     .stageType(stageTypeName)
                     .source("ASSESSMENT")
                     .build());
-            }
-
-            // ── 2. WorkflowStages not yet configured ──────────────────────────
-            if (job.getWorkflowStages() != null) {
-                for (WorkflowStage stage : job.getWorkflowStages()) {
-                    if (stage.getStageType() == null) continue;
-
-                    String stageType = stage.getStageType().name();
-
-                    if ("HR".equals(role) && stage.getStageType() != StageType.RH_TEST) continue;
-                    if (!"HR".equals(role) && !stageType.contains("TEST")) continue;
-
-                    String effectiveAssigneeId = resolveAssigneeId(stage, job);
-
-                    if (evaluatorId != null
-                            && effectiveAssigneeId != null
-                            && !evaluatorId.equals(effectiveAssigneeId)) continue;
-
-                    if (evaluatorId != null && effectiveAssigneeId == null) continue;
-
-                    boolean alreadyLinked = assessments.stream()
-                        .anyMatch(a -> stage.getId().equals(a.getWorkflowStageId()));
-
-                    if (!alreadyLinked) {
-                        allTests.add(TestSummaryResponse.builder()
-                            .id(stage.getId())
-                            .name(stage.getName())
-                            .description(stage.getDescription())
-                            .status("DRAFT")
-                            .themesCount(0)
-                            .questionsCount(0)
-                            .candidatesCount(0)
-                            .completionRate(0)
-                            .createdAt(job.getCreatedAt() != null ? job.getCreatedAt().toString() : null)
-                            .stageType(stageType)
-                            .assignedTo(stage.getAssignedTo())
-                            .assigneeId(effectiveAssigneeId)
-                            .source("WORKFLOW_STAGE")
-                            .build());
-                    }
-                }
             }
 
             if (!allTests.isEmpty()) {
@@ -183,7 +130,6 @@ public class AssessmentService {
     private int countCandidatesForAssessment(String assessmentId, String stageTypeName) {
         return testSessionRepository.countByAssessmentId(assessmentId);
     }
-
     private String resolveAssigneeId(WorkflowStage stage, Job job) {
         if (stage == null) return null;
 
@@ -203,7 +149,6 @@ public class AssessmentService {
 
         return null;
     }
-
     // ══════════════════════════════════════════════════════════════════════════
     // CONFIGURE FROM STAGE
     // ══════════════════════════════════════════════════════════════════════════
@@ -519,6 +464,15 @@ public class AssessmentService {
         return mapSimpleQuestion(questionRepository.save(q));
     }
 
+    
+    
+    
+    
+
+    
+    
+    
+    
     @Transactional
     public void deleteSimpleQuestion(String questionId) {
         questionRepository.deleteById(questionId);
@@ -1728,7 +1682,9 @@ public class AssessmentService {
             .id(a.getId()).jobId(a.getJob().getId())
             .jobTitle(a.getJob().getTitle()).department(a.getJob().getDepartment())
             .name(a.getName()).description(a.getDescription())
-            .status(a.getStatus().name()).themesCount(a.getThemes().size())
+            .status(a.getStatus().name())
+            .type(a.getType() != null ? a.getType().name() : "RH")
+            .themesCount(a.getThemes().size())
             .questionsCount(countAllQuestions(a)).candidatesCount(0).completionRate(0)
             .createdAt(a.getCreatedAt())
             .themes(a.getThemes().stream().map(this::mapTheme).collect(Collectors.toList()))
@@ -1790,8 +1746,10 @@ public class AssessmentService {
             .complexity(q.getComplexity()).timeLimit(q.getTimeLimit()).memoryLimit(q.getMemoryLimit())
             .testCases(q.getTestCases() != null
                 ? q.getTestCases().stream().map(tc -> TestCaseResponse.builder()
-                    .input(tc.getInput()).output(tc.getOutput()).points(tc.getPoints()).build())
+                    .input(tc.getInput()).output(tc.getOutput()).points(tc.getPoints())
+                    .visible(tc.isVisible()).build())
                     .collect(Collectors.toList()) : Collections.emptyList())
+            .supportedLangs(q.getSupportedLangs())
             .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : null)
             .options(q.getQcmOptions() != null
                 ? q.getQcmOptions().stream().map(o -> QcmOptionResponse.builder()
@@ -1837,7 +1795,9 @@ public class AssessmentService {
                 .timeLimit(q.getTimeLimit())
                 .memoryLimit(q.getMemoryLimit())
                 .testCases(cases)
-                .supportedLangs(List.of("python", "javascript", "java", "c", "cpp", "go"))
+                .supportedLangs(q.getSupportedLangs() != null && !q.getSupportedLangs().isEmpty()
+                        ? q.getSupportedLangs()
+                        : List.of("python", "javascript", "java", "c", "cpp", "go"))
                 .selectedLanguage("python")
                 .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : null)
                 .options(options)
@@ -1911,6 +1871,9 @@ public class AssessmentService {
                    .memoryLimit(qp.getMemoryLimit());
             if (qp.getTestCases() != null) {
                 builder.testCases(mapTestCases(qp.getTestCases()));
+            }
+            if (qp.getSupportedLangs() != null && !qp.getSupportedLangs().isEmpty()) {
+                builder.supportedLangs(qp.getSupportedLangs());
             }
         } else {
             if (qp.getQuestionType() != null) {
