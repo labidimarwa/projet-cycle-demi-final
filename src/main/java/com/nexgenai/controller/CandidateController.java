@@ -89,7 +89,7 @@ public class CandidateController {
             @AuthenticationPrincipal UserDetails u,
             @RequestParam("file") MultipartFile file) {
         String cvPath = candidateService.uploadCv(u.getUsername(), file);
-        matchingService.computeMatchesForCandidate(u.getUsername());
+    
         return ResponseEntity.ok(Map.of(
                 "cvPath",  cvPath,
                 "message", "CV uploaded. AI analysis started..."));
@@ -319,6 +319,34 @@ public class CandidateController {
         return ResponseEntity.ok(antiCheatService.buildReport(testId, sessionId));
     }
 
+    
+    
+    @PostMapping("/matches/{jobId}/compute")
+    public ResponseEntity<?> computeMatch(
+            @AuthenticationPrincipal UserDetails u,
+            @PathVariable String jobId) {
+        try {
+            log.info("🎯 Compute match: {} ↔ {}", u.getUsername(), jobId);
+            
+            // Vérifications rapides avant de lancer l'async
+            Candidate c = candidateRepository.findByEmail(u.getUsername())
+                .orElseThrow(() -> new RuntimeException("Candidate not found"));
+            if (c.getCvPath() == null)
+                return ResponseEntity.badRequest().body(Map.of("error", "No CV uploaded"));
+
+            // Lance Ollama en arrière-plan, répond immédiatement
+            matchingService.computeAsync(u.getUsername(), jobId);
+            
+            return ResponseEntity.ok(Map.of(
+                "status",  "computing",
+                "jobId",   jobId,
+                "message", "AI scoring started, please wait..."
+            ));
+        } catch (RuntimeException e) {
+            log.error("❌ Erreur compute: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
     // ── Helper ────────────────────────────────────────────────────────────────
 
     private String getCandidateId(String email) {

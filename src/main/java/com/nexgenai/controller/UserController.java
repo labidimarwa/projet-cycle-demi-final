@@ -60,8 +60,7 @@ public class UserController {
     }
 
     // ─── POST create user (admin only) ────────────────────────────────────────
-
-    @PostMapping
+    @PostMapping("/create")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<CreateUserResponse> createUser(
             @Valid @RequestBody CreateUserRequest request

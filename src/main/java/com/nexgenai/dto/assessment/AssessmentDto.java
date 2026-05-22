@@ -3,6 +3,7 @@ package com.nexgenai.dto.assessment;
 import com.nexgenai.model.enums.AssessmentType;
 import lombok.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -13,6 +14,7 @@ import java.time.LocalDateTime;
  * Designed to be the canonical "summary" view of an assessment, regardless
  * of whether it is an RH or a TECHNICAL one.</p>
  */
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -27,6 +29,7 @@ public class AssessmentDto {
     private Integer        duration;
     private Integer        passingScore;
     private String         difficulty;
+    private LocalDate submissionDeadline;
 
     // Workflow link
     private String  assigneeId;

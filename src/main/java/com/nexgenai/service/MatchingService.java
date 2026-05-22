@@ -25,6 +25,8 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -54,58 +56,49 @@ private final ExecutorService matchingExecutor = Executors.newFixedThreadPool(10
     // ─── Appelé après upload du CV — lance le scoring en arrière-plan ─────────
   
 
-    
- // MatchingService.java
-
-    @Async
-    public void computeMatchesForCandidate(String candidateEmail) {
-        log.info("🔄 Début calcul matching pour : {}", candidateEmail);
-
-        Candidate candidate = findCandidate(candidateEmail);
-        if (candidate == null || candidate.getCvPath() == null) {
-            log.warn("⚠️ Pas de CV pour : {}", candidateEmail);
-            return;
+    @Async("matchingExecutor")
+    public CompletableFuture<Void> computeAsync(String candidateEmail, String jobId) {
+        try {
+            computeMatchForCandidateAndJob(candidateEmail, jobId);
+        } catch (Exception e) {
+            log.error("❌ Async compute failed: {}", e.getMessage());
         }
+        return CompletableFuture.completedFuture(null);
+    }
+
+
+    public JobMatch computeMatchForCandidateAndJob(String candidateEmail, String jobId) {
+        Candidate candidate = findCandidate(candidateEmail);
+        if (candidate == null)
+            throw new RuntimeException("Candidate not found: " + candidateEmail);
+        if (candidate.getCvPath() == null)
+            throw new RuntimeException("No CV uploaded");
 
         String cvText = extractCvText(candidate);
-        if (cvText == null || cvText.isBlank()) {
-            log.warn("⚠️ CV vide ou illisible : {}", candidate.getCvPath());
-            return;
-        }
+        if (cvText == null || cvText.isBlank())
+            throw new RuntimeException("CV is empty or unreadable");
+
+        if (!ollamaService.isAvailable())
+            throw new RuntimeException("AI service unavailable");
 
         String cvHash = md5(cvText);
-        List<Job> activeJobs = jobRepository.findByStatus(JobStatus.ACTIVE);
-        log.info("📋 {} jobs actifs à analyser", activeJobs.size());
 
-        if (!ollamaService.isAvailable()) {
-            log.error("❌ Ollama non disponible — matching annulé");
-            return;
-        }
+        // Cache hit → retourner directement sans appeler Ollama
+        Optional<JobMatch> cached = jobMatchRepository
+            .findByCandidateIdAndJobId(candidate.getId(), jobId)
+            .filter(m -> cvHash.equals(m.getCvHash()) && m.getScore() != null);
+        
+        if (cached.isPresent()) return cached.get();
 
-        List<String> jobIds = activeJobs.stream()
-                .filter(job -> !jobMatchRepository.existsByCandidateIdAndJobIdAndCvHash(
-                    candidate.getId(), job.getId(), cvHash))
-                .map(Job::getId) // ← seulement les IDs, pas les entités
-                .collect(Collectors.toList());
+        // Sinon lancer le calcul
+        Job jobRef = new Job();
+        jobRef.setId(jobId);
+        processJobMatch(candidate, jobRef, cvText, cvHash);  // REQUIRES_NEW = sa propre transaction
 
-            for (String jobId : jobIds) {
-                // Créer un Job shell avec juste l'ID — processJobMatch le rechargera
-                Job jobRef = new Job();
-                jobRef.setId(jobId);
-                processJobMatch(candidate, jobRef, cvText, cvHash);
-            }
-
-            log.info("🎉 Matching terminé pour : {}", candidateEmail);
-    
-    
-    
-    
-    
+        return jobMatchRepository
+            .findByCandidateIdAndJobId(candidate.getId(), jobId)
+            .orElseThrow(() -> new RuntimeException("Match computation failed"));
     }
-    
-    
-    
-    
     
   
     // ─── Récupère les scores en cache pour un candidat ────────────────────────

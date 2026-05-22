@@ -5,6 +5,7 @@ import com.nexgenai.model.enums.AssessmentType;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -86,6 +87,9 @@ public class Assessment {
     @Column(name = "workflow_stage_id")
     private String workflowStageId;
 
+    
+    @Column(name = "submission_deadline")
+    private LocalDate submissionDeadline;
     // ── Relationships ─────────────────────────────────────────────────────────
 
     @ManyToOne(fetch = FetchType.LAZY)

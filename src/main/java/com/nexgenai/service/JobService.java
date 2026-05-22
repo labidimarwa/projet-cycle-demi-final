@@ -9,10 +9,14 @@ import com.nexgenai.model.enums.ExperienceLevel;
 import com.nexgenai.model.enums.JobStatus;
 import com.nexgenai.repository.ApplicationRepository;
 import com.nexgenai.repository.JobRepository;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -21,7 +25,8 @@ public class JobService {
     private final JobRepository         jobRepository;
     private final ApplicationRepository applicationRepository;
     private final InterviewService interviewService;
-
+    @Value("${app.frontend-url:http://localhost:4200}")
+    private String frontendBaseUrl;
     public JobService(JobRepository jobRepository, ApplicationRepository applicationRepository, InterviewService interviewService) {
         this.jobRepository         = jobRepository;
         this.applicationRepository = applicationRepository;
@@ -34,8 +39,7 @@ public class JobService {
     public JobResponse createJob(CreateJobRequest req) {
         Job job = new Job();
         applyRequestToJob(job, req);
-        job.setStatus(JobStatus.ACTIVE);
-
+        job.setStatus(JobStatus.DRAFT);
         if (req.getPrerequisites() != null) {
             req.getPrerequisites().forEach(p -> {
                 Prerequisite prereq = new Prerequisite();
@@ -69,6 +73,8 @@ public class JobService {
                 assessment.setPassingScore(a.getPassingScore());
                 assessment.setAssigneeId(a.getAssigneeId());
                 assessment.setAssigneeName(a.getAssigneeName());
+                assessment.setSubmissionDeadline(a.getSubmissionDeadline());
+
                 // Store linkId so we can match it against workflow stages
                 assessment.setLinkId(a.getLinkId());
                 job.addAssessment(assessment);
@@ -182,6 +188,7 @@ public class JobService {
                 assessment.setPassingScore(a.getPassingScore());
                 assessment.setAssigneeId(a.getAssigneeId());
                 assessment.setAssigneeName(a.getAssigneeName());
+                assessment.setSubmissionDeadline(a.getSubmissionDeadline());
                 assessment.setLinkId(a.getLinkId());
                 job.addAssessment(assessment);
             });
@@ -299,6 +306,8 @@ public class JobService {
                 d.setPassingScore(a.getPassingScore());
                 d.setAssigneeId(a.getAssigneeId());
                 d.setAssigneeName(a.getAssigneeName());
+                d.setSubmissionDeadline(a.getSubmissionDeadline());
+
                 d.setLinkId(a.getLinkId());
                 return d;
             }).collect(Collectors.toList()));
@@ -319,7 +328,18 @@ public class JobService {
 
         return r;
     }
-    
+    public String generateLink(String jobId) {
+        // Verify job exists
+        jobRepository.findById(jobId)
+                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
+
+        // Generate a short token
+        String token = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(UUID.randomUUID().toString().getBytes())
+                .substring(0, 16);
+
+        return String.format("%s/apply/remote/%s?token=%s", frontendBaseUrl, jobId, token);
+    }
     
     
 }

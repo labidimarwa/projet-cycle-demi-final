@@ -93,4 +93,13 @@ public class JobController {
         jobService.deleteJob(id);
         return ResponseEntity.noContent().build();
     }
+    
+    
+    
+    
+    @PostMapping("/{id}/remote-link")
+    public ResponseEntity<Map<String, String>> generateRemoteLink(@PathVariable String id) {
+        String link = jobService.generateLink(id);
+        return ResponseEntity.ok(Map.of("link", link));
+    }
 }

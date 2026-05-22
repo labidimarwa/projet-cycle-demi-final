@@ -65,7 +65,7 @@ public class ApplicationService {
         log.info("📋 Stage progress seeded: candidate {} → job {}", candidate.getId(), jobId);
 
         // ── Trigger async AI matching ─────────────────────────────────────────
-        matchingService.computeMatchesForCandidate(candidateEmail);
+        matchingService.computeMatchForCandidateAndJob(candidateEmail, jobId);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

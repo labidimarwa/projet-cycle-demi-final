@@ -34,6 +34,7 @@ public interface AssessmentRepository extends JpaRepository<Assessment, String> 
     List<Assessment> findByType(AssessmentType type);
 
     List<Assessment> findByHrId(String hrId);
+    List<Assessment> findByJobIdAndAssigneeId(String jobId, String assigneeId);
 
     // ── Fetch-graph variants (kept from JobTestRepository) ───────────────────
 

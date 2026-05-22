@@ -230,4 +230,14 @@ public class CandidateService {
         return candidateRepository.findByEmail(email)
             .orElseThrow(() -> new RuntimeException("Candidate not found: " + email));
     }
+    
+    
+    @Transactional
+    public JobMatch computeSingleMatch(String email, String jobId) {
+        Candidate c = findCandidate(email);
+        if (c.getCvPath() == null)
+            throw new RuntimeException("No CV uploaded");
+        // Déclenche le calcul pour un seul job et retourne le résultat
+        return matchingService.computeMatchForCandidateAndJob(email, jobId);
+    }
 }

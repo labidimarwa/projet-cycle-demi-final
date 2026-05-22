@@ -1,15 +1,18 @@
 package com.nexgenai.dto.job;
 
+import com.nexgenai.dto.assessment.AssessmentDto;
 import com.nexgenai.model.enums.AssessmentType;
 import com.nexgenai.model.enums.ContractType;
 import com.nexgenai.model.enums.ExperienceLevel;
 import com.nexgenai.model.enums.JobStatus;
 import com.nexgenai.model.enums.StageType;
 
+import lombok.Data;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
-
+@Data
 public class JobResponse {
 
     private String          id;
@@ -21,6 +24,8 @@ public class JobResponse {
     private String          description;
     private JobStatus       status;
     private LocalDateTime   createdAt;
+    private LocalDate submissionDeadline;
+
 
     // ── NEW FIELDS ────────────────────────────────────────────────────────────
     private Integer   openPositions;
@@ -99,12 +104,13 @@ public class JobResponse {
         public Boolean getObligatory() { return obligatory; } public void setObligatory(Boolean o) { this.obligatory = o; }
         public Integer getWeight() { return weight; } public void setWeight(Integer w) { this.weight = w; }
     }
+    @Data
 
     public static class AssessmentDTO {
         private String  id, name, assigneeId, assigneeName, linkId;
         private AssessmentType type;
         private Integer duration, passingScore;
-
+        private LocalDate submissionDeadline;
         public String getId() { return id; } public void setId(String id) { this.id = id; }
         public String getName() { return name; } public void setName(String n) { this.name = n; }
         public AssessmentType getType() { return type; } public void setType(AssessmentType t) { this.type = t; }

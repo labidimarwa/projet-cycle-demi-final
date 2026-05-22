@@ -29,8 +29,8 @@ public class JacksonConfig {
     @Bean
     public RestTemplate restTemplate(RestTemplateBuilder builder) {
         return builder
-            .setConnectTimeout(Duration.ofSeconds(10))
-            .setReadTimeout(Duration.ofMinutes(10))
+            .setConnectTimeout(Duration.ofSeconds(5))
+            .setReadTimeout(Duration.ofMinutes(5))  // mistral:7b peut prendre 2-3 min
             .build();
     }
 }

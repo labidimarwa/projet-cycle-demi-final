@@ -81,6 +81,7 @@ public class CreateJobRequest {
         private String         assigneeId;
         private String         assigneeName;
         private String         linkId;
+        private LocalDate submissionDeadline;
     }
 
     @Data @NoArgsConstructor @AllArgsConstructor
