@@ -1,0 +1,177 @@
+name: Security Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run every Monday at 06:00 UTC for proactive CVE scanning
+    - cron: '0 6 * * 1'
+
+jobs:
+
+  # =========================================================
+  # 1. SECURITY UNIT & INTEGRATION TESTS
+  # =========================================================
+  security-tests:
+    name: Security Tests (XSS / SQLI / RBAC / File / JWT / Rate-Limit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Grant execute permission
+        run: chmod +x mvnw
+
+      - name: Run security tests
+        run: |
+          ./mvnw test \
+            -Dspring.profiles.active=test \
+            -Dtest="SecurityAuditFilterTest,RateLimitingFilterTest,FileSecurityValidatorTest,RbacSecurityTest,JwtSecurityTest,SecurityEventLoggerTest" \
+            -DfailIfNoTests=false \
+            --no-transfer-progress
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+      - name: Upload security test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-test-results
+          path: target/surefire-reports/
+          retention-days: 30
+
+  # =========================================================
+  # 2. OWASP DEPENDENCY-CHECK (CVE scan)
+  # =========================================================
+  dependency-check:
+    name: OWASP Dependency-Check (CVE ≥ 7 fails build)
+    runs-on: ubuntu-latest
+    # Only run on push to main/develop and on schedule — not every PR to avoid NVD API quota
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Grant execute permission
+        run: chmod +x mvnw
+
+      - name: Run OWASP Dependency-Check
+        run: |
+          ./mvnw org.owasp:dependency-check-maven:check \
+            --no-transfer-progress \
+            -DfailBuildOnCVSS=7 \
+            -Dformats=HTML,JSON,XML
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Upload CVE report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report/
+          retention-days: 90
+
+      - name: Post CVE summary to job summary
+        if: always()
+        run: |
+          if [ -f target/dependency-check-report/dependency-check-report.json ]; then
+            CRITICAL=$(cat target/dependency-check-report/dependency-check-report.json \
+              | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          deps = data.get('dependencies', [])
+          count = sum(1 for d in deps for v in d.get('vulnerabilities', []) if v.get('cvssv3', {}).get('baseScore', 0) >= 9)
+          print(count)
+              " 2>/dev/null || echo "?")
+            echo "## OWASP Dependency-Check" >> $GITHUB_STEP_SUMMARY
+            echo "Critical CVEs (score ≥ 9): **$CRITICAL**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # =========================================================
+  # 3. STATIC ANALYSIS — SECRET DETECTION
+  # =========================================================
+  secret-detection:
+    name: Secret Detection (Gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # uncomment for org repos
+
+  # =========================================================
+  # 4. OWASP ZAP DAST (Dynamic Analysis — only on main)
+  # =========================================================
+  zap-scan:
+    name: OWASP ZAP DAST Scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Grant execute permission
+        run: chmod +x mvnw
+
+      - name: Start backend for ZAP scan
+        run: |
+          ./mvnw spring-boot:run \
+            -Dspring.profiles.active=test \
+            -Dspring-boot.run.jvmArguments="-Dserver.port=8080" &
+          # Wait for application to start
+          timeout 90 bash -c 'until curl -sf http://localhost:8080/api/v1/actuator/health 2>/dev/null || curl -sf http://localhost:8080/api/v1/jobs 2>/dev/null; do sleep 3; done'
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.11.0
+        with:
+          target: 'http://localhost:8080/api/v1'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-I'   # -I = do not fail on warnings, only on FAIL rules
+          artifact_name: zap-baseline-report
+          allow_issue_writing: false
+
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-scan-report
+          path: report_html.html
+          retention-days: 30

@@ -145,7 +145,7 @@
             <scope>test</scope>
         </dependency>
         
-        
+ 
 
         
         <!-- ===== TEST DEPENDENCIES ===== -->
@@ -244,24 +244,36 @@
             
             
             
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+            <!-- Maven Surefire: XML reports for CI security gate -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.2</version>
+                <configuration>
+                    <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+
+            <!-- OWASP Dependency-Check: CVE scan on all dependencies -->
+            <plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>9.0.9</version>
+                <configuration>
+                    <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <formats>HTML,JSON,XML</formats>
+                    <outputDirectory>${project.build.directory}/dependency-check-report</outputDirectory>
+                    <!-- Suppress known false-positives -->
+                    <suppressionFile>${project.basedir}/owasp-suppressions.xml</suppressionFile>
+                    <!-- Exclude test-scope deps from CVE check -->
+                    <skipTestScope>false</skipTestScope>
+                </configuration>
+            </plugin>
+
         </plugins>
     </build>
 </project>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+
+    <!--
+      Add known false-positives here.
+      Format:
+        <suppress>
+            <notes>Why this is suppressed</notes>
+            <gav regex="true">^groupId:artifactId:.*$</gav>
+            <cve>CVE-XXXX-XXXXX</cve>
+        </suppress>
+    -->
+
+    <!-- H2 is test-scope only; not deployed to production -->
+    <suppress>
+        <notes>H2 database is test-scope only, not reachable in production</notes>
+        <gav regex="true">^com\.h2database:h2:.*$</gav>
+        <cvssBelow>10</cvssBelow>
+    </suppress>
+
+</suppressions>

@@ -53,21 +53,46 @@ public class SecurityConfig {
                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
 
-            // Configuration des autorisations
+            // Configuration des autorisations — RBAC (OWASP A01)
             .authorizeHttpRequests(auth -> auth
-            		.requestMatchers("/auth/**").permitAll()
-            		.requestMatchers("/admin/**").hasRole("ADMIN")
-            		.requestMatchers("/jobs/**").permitAll()
-            		.requestMatchers("/job-tests/**").permitAll()
-            		.requestMatchers("/candidate/**").permitAll()
-            		.requestMatchers("/interviews/**").permitAll()
-            		.requestMatchers("/api/v1/evaluators/**").hasAnyRole("HR", "ADMIN")
-            		  .requestMatchers(HttpMethod.POST, "/api/v1/jobs/*/remote-link").hasAnyRole("HR", "ADMIN")
+                // Public — no auth required
+                .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/error").permitAll()
-                
-                .requestMatchers(HttpMethod.GET,   "/api/v1/candidate/applications/*/stages").hasRole("CANDIDATE")
-                .requestMatchers(HttpMethod.PATCH, "/api/v1/hr/candidates/*/jobs/*/stages/*").hasAnyRole("HR","ADMIN")
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Preflight CORS
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
+                // Admin only
+                .requestMatchers("/admin/**").hasRole("ADMIN")
+
+                // Job listings — public GET, write requires HR or ADMIN
+                .requestMatchers(HttpMethod.GET,  "/jobs/**").permitAll()
+                .requestMatchers(HttpMethod.POST, "/jobs/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.PUT,  "/jobs/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.DELETE,"/jobs/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.PATCH, "/jobs/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/v1/jobs/*/remote-link").hasAnyRole("HR", "ADMIN")
+
+                // Job-tests — HR/ADMIN configure, candidates can read their own
+                .requestMatchers(HttpMethod.GET,  "/job-tests/**").authenticated()
+                .requestMatchers(HttpMethod.POST, "/job-tests/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.PUT,  "/job-tests/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.DELETE,"/job-tests/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.PATCH, "/job-tests/**").hasAnyRole("HR", "ADMIN")
+
+                // Candidate portal — authenticated candidates only
+                .requestMatchers("/candidate/**").hasRole("CANDIDATE")
+                .requestMatchers(HttpMethod.GET, "/api/v1/candidate/applications/*/stages").hasRole("CANDIDATE")
+
+                // Interviews — HR/ADMIN manage, evaluators read
+                .requestMatchers(HttpMethod.GET,  "/interviews/**").hasAnyRole("HR", "ADMIN", "EVALUATOR")
+                .requestMatchers(HttpMethod.POST, "/interviews/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.PUT,  "/interviews/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.PATCH,"/interviews/**").hasAnyRole("HR", "ADMIN", "EVALUATOR")
+
+                // Evaluators management
+                .requestMatchers("/api/v1/evaluators/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/hr/candidates/*/jobs/*/stages/*").hasAnyRole("HR", "ADMIN")
+
+                // Everything else requires authentication
                 .anyRequest().authenticated()
             )
 

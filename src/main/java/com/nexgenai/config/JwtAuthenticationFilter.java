@@ -1,5 +1,6 @@
 package com.nexgenai.config;
 
+import com.nexgenai.security.SecurityEventLogger;
 import com.nexgenai.service.JwtService;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.MalformedJwtException;
@@ -27,6 +28,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService         jwtService;
     private final UserDetailsService userDetailsService;
+    private final SecurityEventLogger securityLogger;
 
     @Override
     protected void doFilterInternal(
@@ -37,36 +39,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         final String authHeader = request.getHeader("Authorization");
         final String requestURI = request.getRequestURI();
+        final String clientIp  = getClientIp(request);
 
-        System.out.println("================ JWT FILTER =================");
-        System.out.println("🔐 URL: " + requestURI);
-        System.out.println("🔐 Authorization Header: " + authHeader);
-
-        // Pas de header → continuer sans authentification
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
         final String jwt = authHeader.substring(7);
-        System.out.println("🔐 JWT extrait: " + jwt.substring(0, Math.min(jwt.length(), 20)) + "...");
-
         String userEmail = null;
 
         try {
             userEmail = jwtService.extractUsername(jwt);
         } catch (ExpiredJwtException e) {
-            // ← CORRECTION : token expiré → ne pas bloquer, laisser passer
-            // Spring Security retournera 401 si la route est protégée
-            log.warn("⚠️ JWT expiré pour : {} — {}", requestURI, e.getMessage());
+            securityLogger.expiredJwt(clientIp, requestURI);
             filterChain.doFilter(request, response);
             return;
         } catch (MalformedJwtException e) {
-            log.warn("⚠️ JWT malformé : {}", e.getMessage());
+            securityLogger.invalidJwt(clientIp, requestURI, "malformed");
             filterChain.doFilter(request, response);
             return;
         } catch (Exception e) {
-            log.warn("⚠️ Erreur JWT : {}", e.getMessage());
+            securityLogger.invalidJwt(clientIp, requestURI, e.getMessage());
             filterChain.doFilter(request, response);
             return;
         }
@@ -93,5 +87,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        return request.getRemoteAddr();
     }
 }
