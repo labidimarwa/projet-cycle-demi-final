@@ -287,6 +287,9 @@ public class CandidateController {
             if (profile.getCvPath() == null)
                 return ResponseEntity.badRequest().body(Map.of("error", "No CV uploaded"));
 
+            if (!matchingService.isAiAvailable())
+                return ResponseEntity.status(503).body(Map.of("error", "AI service unavailable. Please try again later."));
+
             // Lance Ollama en arrière-plan, répond immédiatement
             matchingService.computeAsync(u.getUsername(), jobId);
             

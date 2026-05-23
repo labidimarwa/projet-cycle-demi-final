@@ -56,6 +56,10 @@ private final ExecutorService matchingExecutor = Executors.newFixedThreadPool(10
     // ─── Appelé après upload du CV — lance le scoring en arrière-plan ─────────
   
 
+    public boolean isAiAvailable() {
+        return ollamaService.isAvailable();
+    }
+
     @Async("matchingExecutor")
     public CompletableFuture<Void> computeAsync(String candidateEmail, String jobId) {
         try {
