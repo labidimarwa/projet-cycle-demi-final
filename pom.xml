@@ -210,7 +210,7 @@
             <phase>verify</phase>
             <goals><goal>report</goal></goals>
         </execution>
-        <!-- Fait échouer le build si couverture < 70% -->
+        <!-- Couverture minimale cible : 60% sur les services -->
         <execution>
             <id>check</id>
             <goals><goal>check</goal></goals>
@@ -222,19 +222,24 @@
                             <limit>
                                 <counter>LINE</counter>
                                 <value>COVEREDRATIO</value>
-                          <minimum>0.05</minimum>  <!-- raise incrementally as you add tests -->
+                                <minimum>0.30</minimum>
                             </limit>
                         </limits>
                     </rule>
                 </rules>
-                <!-- Exclure les classes non testables -->
+                <!-- Exclure les classes non-logique-métier -->
                 <excludes>
                     <exclude>com/nexgenai/NexgenaiApplication.class</exclude>
                     <exclude>com/nexgenai/bootstrap/**</exclude>
                     <exclude>com/nexgenai/dto/**</exclude>
                     <exclude>com/nexgenai/model/**</exclude>
-                    <exclude>com/nexgenai/config/**</exclude>
-                    <exclude>com/nexgenai/security/**</exclude>
+                    <exclude>com/nexgenai/config/IntegerListConverter.class</exclude>
+                    <exclude>com/nexgenai/config/JsonListConverter.class</exclude>
+                    <exclude>com/nexgenai/config/QcmOptionListConverter.class</exclude>
+                    <exclude>com/nexgenai/config/StringListConverter.class</exclude>
+                    <exclude>com/nexgenai/config/TestCaseListConverter.class</exclude>
+                    <exclude>com/nexgenai/config/InterviewBootstrapRunner.class</exclude>
+                    <exclude>com/nexgenai/config/JobTestDataInitializer.class</exclude>
                 </excludes>
             </configuration>
         </execution>
