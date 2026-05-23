@@ -1,7 +1,5 @@
 package com.nexgenai.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.dto.hr.AnswerDecisionResponse;
 import com.nexgenai.dto.jobtest.JobTestDtos.*;
 import com.nexgenai.model.*;
@@ -23,16 +21,16 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AssessmentResultsService {
 
-    private final TestSessionRepository      testSessionRepository;
-    private final AssessmentRepository       assessmentRepository;
-    private final QuestionRepository         questionRepository;
-    private final QuestionOptionRepository   optionRepository;
-    private final ThemeModelRepository       themeModelRepository;
-    private final CandidateRepository        candidateRepository;
-    private final AntiCheatEventRepository   antiCheatRepository;
-    private final TestThemeRepository        themeRepository;
-
-    private final ObjectMapper objectMapper;
+    private final TestSessionRepository              testSessionRepository;
+    private final AssessmentRepository               assessmentRepository;
+    private final QuestionRepository                 questionRepository;
+    private final QuestionOptionRepository           optionRepository;
+    private final ThemeModelRepository               themeModelRepository;
+    private final CandidateRepository                candidateRepository;
+    private final AntiCheatEventRepository           antiCheatRepository;
+    private final TestThemeRepository                themeRepository;
+    private final TestSessionAnswerRepository        sessionAnswerRepository;
+    private final TestSessionAnswerDecisionRepository decisionRepository;
 
     @Value("${app.base-url:http://localhost:8080}")
     private String baseUrl;
@@ -108,14 +106,10 @@ public class AssessmentResultsService {
             .orElseThrow(() -> new RuntimeException("RH session not found"));
         Candidate candidate = session.getCandidate();
 
-        Map<String, Object> rawAnswers = parseSavedAnswers(session.getAnswersJson());
         Map<String, String> answerMap = new HashMap<>();
-        for (Map.Entry<String, Object> entry : rawAnswers.entrySet()) {
-            Object val = entry.getValue();
-            if (val instanceof List<?> list && !list.isEmpty())
-                answerMap.put(entry.getKey(), list.get(0).toString());
-            else if (val instanceof String s)
-                answerMap.put(entry.getKey(), s);
+        for (TestSessionAnswer a : sessionAnswerRepository.findBySessionId(session.getId())) {
+            if (!a.getSelectedOptionIds().isEmpty())
+                answerMap.put(a.getQuestionId(), a.getSelectedOptionIds().get(0));
         }
 
         List<ThemeResultResponse>  themeResults    = new ArrayList<>();
@@ -283,8 +277,12 @@ public class AssessmentResultsService {
             .orElseThrow(() -> new RuntimeException(
                 "Session not found for assessmentId=" + assessmentId + " candidateId=" + candidateId));
 
-        Map<String, Object> answersMap = parseSavedAnswers(session.getAnswersJson());
-        Map<String, AnswerDecisionResponse> decisionsMap = parseDecisions(session.getDecisionsJson());
+        Map<String, TestSessionAnswer> answersMap = sessionAnswerRepository.findBySessionId(session.getId())
+                .stream().collect(Collectors.toMap(TestSessionAnswer::getQuestionId, a -> a));
+
+        Map<String, TestSessionAnswerDecision> decisionsMap = decisionRepository.findBySessionId(session.getId())
+                .stream().collect(Collectors.toMap(TestSessionAnswerDecision::getQuestionId, d -> d));
+
         List<ThemeAnswersResponse> themeAnswers = new ArrayList<>();
         int totalEarned = 0, totalMax = 0;
 
@@ -325,7 +323,8 @@ public class AssessmentResultsService {
                 int themeEarned = 0, themeMax = 0;
                 for (Question q : themeQs) {
                     QuestionAnswerResponse qr = buildQuestionAnswerResponse(
-                            q, answersMap.get(q.getId()), decisionsMap.get(q.getId()));
+                            q, answersMap.get(q.getId()),
+                            decisionsMap.get(q.getId()));
                     qResponses.add(qr); themeEarned += qr.getEarnedPoints(); themeMax += qr.getPoints();
                 }
 
@@ -362,9 +361,9 @@ public class AssessmentResultsService {
     // PRIVATE HELPERS
     // ══════════════════════════════════════════════════════════════════════════
 
-    @SuppressWarnings("unchecked")
-    private QuestionAnswerResponse buildQuestionAnswerResponse(Question q, Object rawAnswer,
-                                                               AnswerDecisionResponse decision) {
+    private QuestionAnswerResponse buildQuestionAnswerResponse(Question q,
+                                                               TestSessionAnswer saved,
+                                                               TestSessionAnswerDecision decision) {
         QuestionAnswerResponse.QuestionAnswerResponseBuilder b = QuestionAnswerResponse.builder()
             .questionId(q.getId()).title(q.getTitle() != null ? q.getTitle() : "")
             .statement(stripHtml(q.getStatement() != null ? q.getStatement() : q.getText()))
@@ -378,31 +377,19 @@ public class AssessmentResultsService {
             .manualPoints(decision != null ? decision.getManualPoints() : null);
 
         if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING) {
-            String code = null, language = null;
+            String code     = saved != null ? saved.getSubmittedCode() : null;
+            String language = saved != null ? saved.getSubmittedLanguage() : null;
+
             List<TestCaseAnswerResponse> tcResults = new ArrayList<>();
-
-            if (rawAnswer instanceof Map<?, ?> rawMap) {
-                Map<String, Object> ans = (Map<String, Object>) rawMap;
-                code     = (String) ans.get("code");
-                language = (String) ans.get("language");
-                Object tcrRaw = ans.get("testResults");
-                if (tcrRaw instanceof List<?> tcrList) {
-                    for (Object item : tcrList) {
-                        if (item instanceof Map<?, ?> tcMap) {
-                            Map<String, Object> tc = (Map<String, Object>) tcMap;
-                            tcResults.add(TestCaseAnswerResponse.builder()
-                                .input((String) tc.get("input")).expectedOutput((String) tc.get("expected"))
-                                .actualOutput((String) tc.get("actual"))
-                                .passed(Boolean.TRUE.equals(tc.get("passed")))
-                                .points(toInt(tc.get("points"))).earnedPoints(toInt(tc.get("earnedPoints")))
-                                .executionMs(toLong(tc.get("executionMs")))
-                                .isVisible(Boolean.TRUE.equals(tc.get("isVisible"))).build());
-                        }
-                    }
+            if (saved != null && !saved.getTestCaseResults().isEmpty()) {
+                for (TestCaseResult tc : saved.getTestCaseResults()) {
+                    tcResults.add(TestCaseAnswerResponse.builder()
+                        .input(tc.getInput()).expectedOutput(tc.getExpectedOutput())
+                        .actualOutput(tc.getActualOutput()).passed(tc.isPassed())
+                        .points(tc.getPoints()).earnedPoints(tc.getEarnedPoints())
+                        .executionMs(tc.getExecutionMs()).isVisible(tc.isVisible()).build());
                 }
-            }
-
-            if (tcResults.isEmpty() && q.getTestCases() != null) {
+            } else if (q.getTestCases() != null) {
                 for (Question.TestCase tc : q.getTestCases()) {
                     tcResults.add(TestCaseAnswerResponse.builder()
                         .input(tc.getInput()).expectedOutput(tc.getOutput()).actualOutput(null)
@@ -417,14 +404,13 @@ public class AssessmentResultsService {
         }
 
         if (q.getQuestionType() == Question.QuestionType.LIKERT) {
-            Integer selectedLikert = null; int earned = 0;
-            if (rawAnswer instanceof Number num) {
-                selectedLikert = num.intValue();
+            Integer selectedLikert = saved != null ? saved.getLikertValue() : null;
+            int earned = 0;
+            if (selectedLikert != null) {
                 List<Integer> lp = q.getLikertPoints();
-                if (lp != null && selectedLikert >= 1 && selectedLikert <= lp.size()) {
-                    Integer pts = lp.get(selectedLikert - 1);
-                    earned = pts != null ? pts : 0;
-                }
+                int idx = selectedLikert - 1;
+                if (lp != null && idx >= 0 && idx < lp.size())
+                    earned = lp.get(idx) != null ? lp.get(idx) : 0;
             }
             return b.options(Collections.emptyList())
                     .likertPoints(q.getLikertPoints() != null ? q.getLikertPoints() : Collections.emptyList())
@@ -432,10 +418,8 @@ public class AssessmentResultsService {
         }
 
         // QCM (RADIO / CHECKBOX)
-        Set<String> selectedIds = new HashSet<>();
-        if (rawAnswer instanceof String str) selectedIds.add(str);
-        else if (rawAnswer instanceof List<?> list)
-            for (Object o : list) { if (o instanceof String s) selectedIds.add(s); }
+        Set<String> selectedIds = saved != null && saved.getSelectedOptionIds() != null
+                ? new HashSet<>(saved.getSelectedOptionIds()) : Collections.emptySet();
 
         List<QcmOptionAnswerResponse> optionResponses = new ArrayList<>();
         int earned = 0;
@@ -479,33 +463,6 @@ public class AssessmentResultsService {
         return null;
     }
 
-    private Map<String, Object> parseSavedAnswers(String json) {
-        if (json == null || json.isBlank()) return new LinkedHashMap<>();
-        try { return objectMapper.readValue(json, new TypeReference<>() {}); }
-        catch (Exception e) { return new LinkedHashMap<>(); }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, AnswerDecisionResponse> parseDecisions(String json) {
-        if (json == null || json.isBlank()) return new LinkedHashMap<>();
-        Map<String, AnswerDecisionResponse> result = new LinkedHashMap<>();
-        try {
-            Map<String, Object> raw = objectMapper.readValue(json, new TypeReference<>() {});
-            for (Map.Entry<String, Object> e : raw.entrySet()) {
-                if (e.getValue() instanceof Map<?, ?> m) {
-                    Map<String, Object> d = (Map<String, Object>) m;
-                    Object mp = d.get("manualPoints");
-                    result.put(e.getKey(), AnswerDecisionResponse.builder()
-                            .questionId(e.getKey())
-                            .decision(d.get("decision") != null ? d.get("decision").toString() : null)
-                            .note(d.get("note") != null ? d.get("note").toString() : null)
-                            .manualPoints(mp instanceof Number n ? n.intValue() : null).build());
-                }
-            }
-        } catch (Exception e) { /* return empty */ }
-        return result;
-    }
-
     private String stripHtml(String html) {
         if (html == null) return "";
         return html.replaceAll("<[^>]+>", " ")
@@ -514,15 +471,4 @@ public class AssessmentResultsService {
             .replaceAll("\\s+", " ").trim();
     }
 
-    private int toInt(Object o) {
-        if (o instanceof Number n) return n.intValue();
-        if (o instanceof String s) { try { return Integer.parseInt(s); } catch (Exception e) {} }
-        return 0;
-    }
-
-    private Long toLong(Object o) {
-        if (o instanceof Number n) return n.longValue();
-        if (o instanceof String s) { try { return Long.parseLong(s); } catch (Exception e) {} }
-        return null;
-    }
 }

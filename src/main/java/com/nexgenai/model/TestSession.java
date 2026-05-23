@@ -86,33 +86,7 @@ public class TestSession {
     @Column(name = "total_points")
     private Integer totalPoints;
 
-    // ── Answers (serialized JSON) ─────────────────────────────────────────────
-
-    /**
-     * Candidate answers serialised as JSON. Format depends on session type:
-     * <ul>
-     *   <li>RH: {@code { questionId: optionId | [optionIds] | likertValue }}</li>
-     *   <li>TECHNICAL: {@code { questionId: { code, language } | optionId | ... }}</li>
-     * </ul>
-     */
-    @Column(name = "answers_json", columnDefinition = "TEXT")
-    @Builder.Default
-    private String answersJson = "{}";
-
-    /**
-     * Evaluator per-answer decisions: Map&lt;questionId, AnswerDecisionData&gt;.
-     * Each entry holds decision (APPROVED/REJECTED), optional note, optional manual point override.
-     */
-    @Column(name = "decisions_json", columnDefinition = "TEXT")
-    @Builder.Default
-    private String decisionsJson = "{}";
-
     // ── Anti-Cheat ────────────────────────────────────────────────────────────
-
-    /** JSON array of granular anti-cheat events. */
-    @Column(name = "anti_cheat_json", columnDefinition = "TEXT")
-    @Builder.Default
-    private String antiCheatJson = "[]";
 
     /** Aggregated counters – exposed as columns for quick reporting / sorting. */
     @Column(name = "tab_switches")

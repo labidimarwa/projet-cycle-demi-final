@@ -1,7 +1,5 @@
 package com.nexgenai.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.dto.hr.AnswerDecisionRequest;
 import com.nexgenai.dto.hr.AnswerDecisionResponse;
 import com.nexgenai.dto.jobtest.JobTestDtos.*;
@@ -17,29 +15,33 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * Manages the lifecycle of test sessions: start, answer, submit (both technical and RH),
- * and anti-cheat event logging.
+ * and anti-cheat event logging. All candidate answers and events are stored in proper
+ * relational tables — no JSON columns used.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class TestSessionService {
 
-    private final TestSessionRepository      testSessionRepository;
-    private final AssessmentRepository       assessmentRepository;
-    private final QuestionRepository         questionRepository;
-    private final CandidateRepository        candidateRepository;
-    private final AntiCheatEventRepository   antiCheatRepository;
-    private final TestSubmissionRepository   submissionRepository;
-    private final CandidateAnswerRepository  answerRepository;
-    private final WorkflowStageRepository    workflowStageRepository;
+    private final TestSessionRepository              testSessionRepository;
+    private final AssessmentRepository               assessmentRepository;
+    private final QuestionRepository                 questionRepository;
+    private final CandidateRepository                candidateRepository;
+    private final AntiCheatEventRepository           antiCheatRepository;
+    private final TestSubmissionRepository           submissionRepository;
+    private final CandidateAnswerRepository          answerRepository;
+    private final WorkflowStageRepository            workflowStageRepository;
+    private final TestSessionAnswerRepository        sessionAnswerRepository;
+    private final TestSessionAnswerDecisionRepository decisionRepository;
 
     private final CodeExecutionService codeExecutionService;
-    private final ObjectMapper         objectMapper;
 
     @Value("${app.base-url:http://localhost:8080}")
     private String baseUrl;
@@ -57,15 +59,11 @@ public class TestSessionService {
 
         TestSession session = testSessionRepository
                 .findByCandidateIdAndAssessmentId(candidate.getId(), assessmentId)
-                .orElseGet(() -> {
-                    TestSession s = TestSession.builder()
-                            .candidate(candidate).assessment(assessment)
-                            .type(assessment.getType())
-                            .status(TestSession.SessionStatus.IN_PROGRESS)
-                            .startedAt(LocalDateTime.now())
-                            .answersJson("{}").antiCheatJson("[]").build();
-                    return testSessionRepository.save(s);
-                });
+                .orElseGet(() -> testSessionRepository.save(TestSession.builder()
+                        .candidate(candidate).assessment(assessment)
+                        .type(assessment.getType())
+                        .status(TestSession.SessionStatus.IN_PROGRESS)
+                        .startedAt(LocalDateTime.now()).build()));
 
         return Map.of(
                 "sessionId", session.getId(),
@@ -97,11 +95,13 @@ public class TestSessionService {
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
             throw new RuntimeException("Test already submitted");
 
-        Map<String, Object> savedAnswers = parseSavedAnswers(session.getAnswersJson());
+        Map<String, TestSessionAnswer> savedByQuestion = sessionAnswerRepository
+                .findBySessionId(session.getId()).stream()
+                .collect(Collectors.toMap(TestSessionAnswer::getQuestionId, a -> a));
 
         List<SimpleQuestionDto> questions = assessment.getThemes().stream()
                 .flatMap(theme -> questionRepository.findByThemeIdOrderByOrderIndex(theme.getId()).stream())
-                .map(q -> mapToTechnicalDto(q, savedAnswers.get(q.getId())))
+                .map(q -> mapToTechnicalDto(q, savedByQuestion.get(q.getId())))
                 .collect(Collectors.toList());
 
         int timeLimitSeconds = computeTimeLimit(questions);
@@ -124,33 +124,44 @@ public class TestSessionService {
                 .orElseThrow(() -> new RuntimeException("Session not found"));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED) return;
 
-        Map<String, Object> answers = parseSavedAnswers(session.getAnswersJson());
-        answers.put(questionId, answer);
-        try {
-            session.setAnswersJson(objectMapper.writeValueAsString(answers));
-            testSessionRepository.save(session);
-        } catch (Exception e) {
-            log.warn("Could not save answer for session {}", sessionId);
-        }
+        persistAnswer(session, questionId, answer);
     }
 
     @Transactional
+    @SuppressWarnings("unchecked")
     public SubmitResultDto submitTechnicalTest(String sessionId, SubmitTestRequest req, String email) {
         TestSession session = testSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new RuntimeException("Session not found"));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
             throw new RuntimeException("Already submitted");
 
-        if (req.getAnswers() != null && !req.getAnswers().isEmpty()) {
-            try { session.setAnswersJson(objectMapper.writeValueAsString(req.getAnswers())); }
-            catch (Exception ignored) {}
-        }
-        if (req.getAntiCheatLog() != null) {
-            try { session.setAntiCheatJson(objectMapper.writeValueAsString(req.getAntiCheatLog())); }
-            catch (Exception ignored) {}
+        // Persist any answers sent in the final submission payload
+        if (req.getAnswers() != null) {
+            for (Map.Entry<String, Object> entry : req.getAnswers().entrySet()) {
+                persistAnswer(session, entry.getKey(), entry.getValue());
+            }
         }
 
-        Map<String, Object> answers = parseSavedAnswers(session.getAnswersJson());
+        // Persist anti-cheat events
+        if (req.getAntiCheatLog() != null) {
+            Assessment assessment = session.getAssessment();
+            for (AntiCheatEventDto evt : req.getAntiCheatLog()) {
+                antiCheatRepository.save(AntiCheatEvent.builder()
+                        .testId(assessment.getId())
+                        .sessionId(sessionId)
+                        .type(evt.getType())
+                        .detail(evt.getDetail())
+                        .questionIndex(evt.getQuestionIndex())
+                        .occurredAt(parseTimestamp(evt.getTimestamp()))
+                        .build());
+            }
+        }
+
+        // Load all saved answers for scoring
+        Map<String, TestSessionAnswer> answersByQuestion = sessionAnswerRepository
+                .findBySessionId(sessionId).stream()
+                .collect(Collectors.toMap(TestSessionAnswer::getQuestionId, a -> a));
+
         Assessment assessment = session.getAssessment();
         List<QuestionResultDto> questionResults = new ArrayList<>();
         int totalPoints = 0, earnedPoints = 0;
@@ -158,10 +169,10 @@ public class TestSessionService {
         for (TestTheme theme : assessment.getThemes()) {
             List<Question> questions = questionRepository.findByThemeIdOrderByOrderIndex(theme.getId());
             for (Question q : questions) {
-                Object rawAnswer = answers.get(q.getId());
                 int maxPts = q.getPoints() != null ? q.getPoints() : 10;
                 totalPoints += maxPts;
-                int pts = scoreQuestion(q, rawAnswer, answers, req);
+                TestSessionAnswer saved = answersByQuestion.get(q.getId());
+                int pts = scoreQuestion(q, saved, maxPts);
                 earnedPoints += pts;
                 questionResults.add(QuestionResultDto.builder()
                         .questionId(q.getId()).title(q.getTitle())
@@ -169,9 +180,6 @@ public class TestSessionService {
                         .earnedPoints(pts).maxPoints(maxPts).build());
             }
         }
-
-        try { session.setAnswersJson(objectMapper.writeValueAsString(answers)); }
-        catch (Exception e) { log.warn("Could not re-save enriched answers for session {}", sessionId); }
 
         double score = totalPoints > 0
                 ? Math.round((double) earnedPoints / totalPoints * 1000.0) / 10.0 : 0.0;
@@ -221,8 +229,8 @@ public class TestSessionService {
                     .timeLimit(0).timeLeftSeconds(0).questions(questions).build();
         }
 
-        int timeLimitMinutes  = resolveRhTimeLimit(assessment);
-        int timeLimitSeconds  = timeLimitMinutes * 60;
+        int timeLimitMinutes = resolveRhTimeLimit(assessment);
+        int timeLimitSeconds = timeLimitMinutes * 60;
         int timeLeftSeconds;
         if (session.getStartedAt() != null) {
             long elapsed = java.time.Duration.between(session.getStartedAt(), LocalDateTime.now()).getSeconds();
@@ -252,11 +260,9 @@ public class TestSessionService {
             return session.getScore() != null ? session.getScore() : 0;
 
         Map<String, List<String>> answers = new HashMap<>();
-        try {
-            if (session.getAnswersJson() != null)
-                answers = objectMapper.readValue(session.getAnswersJson(),
-                        new TypeReference<Map<String, List<String>>>() {});
-        } catch (Exception ignored) {}
+        for (TestSessionAnswer a : sessionAnswerRepository.findBySessionId(sessionId)) {
+            answers.put(a.getQuestionId(), a.getSelectedOptionIds());
+        }
 
         Assessment assessment = assessmentRepository.findByIdWithThemes(session.getAssessment().getId())
                 .orElseThrow(() -> new RuntimeException("Assessment not found"));
@@ -290,15 +296,11 @@ public class TestSessionService {
 
     @Transactional(readOnly = true)
     public Map<String, List<String>> getRhSavedAnswers(String sessionId, String email) {
-        TestSession session = testSessionRepository.findById(sessionId).orElse(null);
-        if (session == null || session.getAnswersJson() == null) return Map.of();
-        try {
-            return objectMapper.readValue(session.getAnswersJson(),
-                    new TypeReference<Map<String, List<String>>>() {});
-        } catch (Exception e) {
-            log.warn("Could not parse answers JSON for session {}", sessionId);
-            return Map.of();
+        Map<String, List<String>> result = new HashMap<>();
+        for (TestSessionAnswer a : sessionAnswerRepository.findBySessionId(sessionId)) {
+            result.put(a.getQuestionId(), a.getSelectedOptionIds());
         }
+        return result;
     }
 
     @Transactional
@@ -308,17 +310,13 @@ public class TestSessionService {
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
             throw new RuntimeException("Test already submitted");
 
-        Map<String, List<String>> answers = new HashMap<>();
-        try {
-            if (session.getAnswersJson() != null && !session.getAnswersJson().isBlank())
-                answers = objectMapper.readValue(session.getAnswersJson(),
-                        new TypeReference<Map<String, List<String>>>() {});
-        } catch (Exception ignored) {}
+        TestSessionAnswer answer = sessionAnswerRepository
+                .findBySessionIdAndQuestionId(session.getId(), req.getQuestionId())
+                .orElseGet(() -> TestSessionAnswer.builder()
+                        .session(session).questionId(req.getQuestionId()).build());
 
-        answers.put(req.getQuestionId(), req.getOptionIds() != null ? req.getOptionIds() : List.of());
-        try { session.setAnswersJson(objectMapper.writeValueAsString(answers)); }
-        catch (Exception e) { throw new RuntimeException("Could not serialize answers", e); }
-        testSessionRepository.save(session);
+        answer.setSelectedOptionIds(req.getOptionIds() != null ? req.getOptionIds() : List.of());
+        sessionAnswerRepository.save(answer);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -330,16 +328,14 @@ public class TestSessionService {
         TestSession session = testSessionRepository.findById(sessionId).orElse(null);
         if (session == null) return;
 
-        List<Map<String, Object>> logEntries = parseAntiCheatLog(session.getAntiCheatJson());
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("type", event.getType()); entry.put("detail", event.getDetail());
-        entry.put("questionIndex", event.getQuestionIndex()); entry.put("timestamp", event.getTimestamp());
-        logEntries.add(entry);
-
-        try {
-            session.setAntiCheatJson(objectMapper.writeValueAsString(logEntries));
-            testSessionRepository.save(session);
-        } catch (Exception ignored) {}
+        antiCheatRepository.save(AntiCheatEvent.builder()
+                .testId(session.getAssessment().getId())
+                .sessionId(sessionId)
+                .type(event.getType())
+                .detail(event.getDetail())
+                .questionIndex(event.getQuestionIndex())
+                .occurredAt(parseTimestamp(event.getTimestamp()))
+                .build());
     }
 
     @Transactional(readOnly = true)
@@ -347,7 +343,17 @@ public class TestSessionService {
         TestSession session = testSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new RuntimeException("Session not found"));
 
-        List<AntiCheatEventDto> events = parseAntiCheatEvents(session.getAntiCheatJson());
+        List<AntiCheatEvent> rawEvents = antiCheatRepository.findBySessionIdOrderByOccurredAtAsc(sessionId);
+
+        List<AntiCheatEventDto> events = rawEvents.stream()
+                .map(e -> {
+                    AntiCheatEventDto dto = new AntiCheatEventDto();
+                    dto.setType(e.getType());
+                    dto.setDetail(e.getDetail());
+                    dto.setQuestionIndex(e.getQuestionIndex());
+                    dto.setTimestamp(e.getOccurredAt() != null ? e.getOccurredAt().toString() : null);
+                    return dto;
+                }).collect(Collectors.toList());
 
         long tabSwitches = events.stream().filter(e -> "TAB_SWITCH".equals(e.getType())).count();
         long pastes      = events.stream().filter(e -> "PASTE".equals(e.getType())).count();
@@ -375,21 +381,174 @@ public class TestSessionService {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // PER-ANSWER EVALUATOR DECISIONS
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Transactional
+    public AnswerDecisionResponse setAnswerDecision(String assessmentId, String candidateId,
+                                                    String questionId, AnswerDecisionRequest req) {
+        TestSession session = testSessionRepository
+                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
+                .orElseThrow(() -> new RuntimeException("Session not found"));
+
+        TestSessionAnswerDecision decision = decisionRepository
+                .findBySessionIdAndQuestionId(session.getId(), questionId)
+                .orElseGet(() -> TestSessionAnswerDecision.builder()
+                        .session(session).questionId(questionId).build());
+
+        decision.setDecision(req.getDecision());
+        decision.setNote(req.getNote());
+        decision.setManualPoints(req.getManualPoints());
+        decisionRepository.save(decision);
+
+        return AnswerDecisionResponse.builder()
+                .questionId(questionId).decision(req.getDecision())
+                .note(req.getNote()).manualPoints(req.getManualPoints()).build();
+    }
+
+    @Transactional
+    public void removeAnswerDecision(String assessmentId, String candidateId, String questionId) {
+        TestSession session = testSessionRepository
+                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
+                .orElseThrow(() -> new RuntimeException("Session not found"));
+        decisionRepository.deleteBySessionIdAndQuestionId(session.getId(), questionId);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, AnswerDecisionResponse> getAnswerDecisions(String assessmentId, String candidateId) {
+        TestSession session = testSessionRepository
+                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
+                .orElseThrow(() -> new RuntimeException("Session not found"));
+        return buildDecisionMap(session.getId());
+    }
+
+    public Map<String, AnswerDecisionResponse> buildDecisionMap(String sessionId) {
+        Map<String, AnswerDecisionResponse> result = new LinkedHashMap<>();
+        for (TestSessionAnswerDecision d : decisionRepository.findBySessionId(sessionId)) {
+            result.put(d.getQuestionId(), AnswerDecisionResponse.builder()
+                    .questionId(d.getQuestionId())
+                    .decision(d.getDecision())
+                    .note(d.getNote())
+                    .manualPoints(d.getManualPoints()).build());
+        }
+        return result;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // PRIVATE HELPERS
     // ══════════════════════════════════════════════════════════════════════════
 
     private TestSession createTechnicalSession(Candidate candidate, Assessment assessment) {
         return testSessionRepository.save(TestSession.builder()
                 .candidate(candidate).assessment(assessment).type(AssessmentType.TECHNICAL)
-                .status(TestSession.SessionStatus.IN_PROGRESS).startedAt(LocalDateTime.now())
-                .answersJson("{}").antiCheatJson("[]").build());
+                .status(TestSession.SessionStatus.IN_PROGRESS).startedAt(LocalDateTime.now()).build());
     }
 
     private TestSession createRhSession(Candidate candidate, Assessment assessment) {
         return testSessionRepository.save(TestSession.builder()
                 .candidate(candidate).assessment(assessment).type(AssessmentType.RH)
-                .status(TestSession.SessionStatus.IN_PROGRESS).startedAt(LocalDateTime.now())
-                .answersJson("{}").build());
+                .status(TestSession.SessionStatus.IN_PROGRESS).startedAt(LocalDateTime.now()).build());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void persistAnswer(TestSession session, String questionId, Object answer) {
+        if (answer == null) return;
+        TestSessionAnswer entity = sessionAnswerRepository
+                .findBySessionIdAndQuestionId(session.getId(), questionId)
+                .orElseGet(() -> TestSessionAnswer.builder()
+                        .session(session).questionId(questionId).build());
+
+        if (answer instanceof Map<?, ?> map) {
+            Map<String, Object> m = (Map<String, Object>) map;
+            entity.setSubmittedCode((String) m.get("code"));
+            entity.setSubmittedLanguage((String) m.get("language"));
+        } else if (answer instanceof List<?> list) {
+            entity.setSelectedOptionIds(list.stream().map(Object::toString).collect(Collectors.toList()));
+        } else if (answer instanceof Number num) {
+            entity.setLikertValue(num.intValue());
+        } else {
+            entity.setSelectedOptionIds(List.of(answer.toString()));
+        }
+        sessionAnswerRepository.save(entity);
+    }
+
+    private int scoreQuestion(Question q, TestSessionAnswer saved, int maxPts) {
+        if (saved == null) return 0;
+        try {
+            if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING)
+                return scoreProblemSolving(q, saved, maxPts);
+            return scoreQcm(q, saved, maxPts);
+        } catch (Exception e) {
+            log.warn("Error scoring question {}: {}", q.getId(), e.getMessage());
+            return 0;
+        }
+    }
+
+    private int scoreProblemSolving(Question q, TestSessionAnswer saved, int maxPts) {
+        String code     = saved.getSubmittedCode();
+        String language = saved.getSubmittedLanguage();
+        if (code == null || code.isBlank()) return 0;
+        if (language == null) language = "python";
+
+        List<RunCodeRequest.TestCasePayload> cases = (q.getTestCases() != null)
+                ? q.getTestCases().stream()
+                    .map(tc -> new RunCodeRequest.TestCasePayload(tc.getInput(), tc.getOutput(),
+                                                                  tc.getPoints(), tc.isVisible()))
+                    .collect(Collectors.toList())
+                : List.of();
+        if (cases.isEmpty()) return 0;
+
+        List<TestCaseResultDto> results = codeExecutionService.execute(code, language, cases);
+        int earned = results.stream().filter(TestCaseResultDto::isPassed)
+                .mapToInt(TestCaseResultDto::getEarnedPoints).sum();
+
+        // Persist test-case execution results as entities
+        saved.getTestCaseResults().clear();
+        for (int i = 0; i < results.size(); i++) {
+            TestCaseResultDto r = results.get(i);
+            saved.getTestCaseResults().add(TestCaseResult.builder()
+                    .sessionAnswer(saved).caseIndex(i)
+                    .input(r.getInput()).expectedOutput(r.getExpected()).actualOutput(r.getActual())
+                    .passed(r.isPassed()).points(r.getPoints()).earnedPoints(r.getEarnedPoints())
+                    .executionMs(r.getExecutionMs()).isVisible(true).error(r.getError())
+                    .build());
+        }
+        sessionAnswerRepository.save(saved);
+
+        log.info("Question {} — code scored: {}/{} pts", q.getId(), earned, maxPts);
+        return Math.min(earned, maxPts);
+    }
+
+    private int scoreQcm(Question q, TestSessionAnswer saved, int maxPts) {
+        String qType = q.getQuestionType() != null ? q.getQuestionType().name() : null;
+        if (qType == null) return 0;
+        List<Question.QcmOption> opts = q.getQcmOptions() != null ? q.getQcmOptions() : List.of();
+
+        return switch (qType) {
+            case "RADIO" -> {
+                List<String> sel = saved.getSelectedOptionIds();
+                String selected = (sel != null && !sel.isEmpty()) ? sel.get(0) : "";
+                yield opts.stream()
+                        .filter(o -> o.getId() != null && selected.equals(o.getId()))
+                        .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0)
+                        .findFirst().orElse(0);
+            }
+            case "CHECKBOX" -> {
+                List<String> selected = saved.getSelectedOptionIds() != null ? saved.getSelectedOptionIds() : List.of();
+                yield opts.stream()
+                        .filter(o -> selected.contains(o.getId()) || selected.contains(o.getText()))
+                        .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
+            }
+            case "LIKERT" -> {
+                Integer val = saved.getLikertValue();
+                if (val == null) yield 0;
+                int idx = val - 1;
+                if (q.getLikertPoints() != null && idx >= 0 && idx < q.getLikertPoints().size())
+                    yield q.getLikertPoints().get(idx);
+                yield 0;
+            }
+            default -> 0;
+        };
     }
 
     private int computeTimeLimit(List<SimpleQuestionDto> questions) {
@@ -429,17 +588,21 @@ public class TestSessionService {
 
     private List<AntiCheatReportDto.QuestionResult> buildAntiCheatQuestionResults(TestSession session) {
         Assessment assessment = session.getAssessment();
-        Map<String, Object> answers = parseSavedAnswers(session.getAnswersJson());
+        Map<String, TestSessionAnswer> byQuestion = sessionAnswerRepository
+                .findBySessionId(session.getId()).stream()
+                .collect(Collectors.toMap(TestSessionAnswer::getQuestionId, a -> a));
+
         List<AntiCheatReportDto.QuestionResult> results = new ArrayList<>();
 
         for (TestTheme theme : assessment.getThemes()) {
             List<Question> questions = questionRepository.findByThemeIdOrderByOrderIndex(theme.getId());
-            if (questions.isEmpty() && !answers.isEmpty())
-                questions = questionRepository.findByIdIn(new ArrayList<>(answers.keySet()));
+            if (questions.isEmpty() && !byQuestion.isEmpty())
+                questions = questionRepository.findByIdIn(new ArrayList<>(byQuestion.keySet()));
 
             for (Question q : questions) {
-                int maxPts  = q.getPoints() != null ? q.getPoints() : 0;
-                int earned  = estimateEarnedFromAnswer(q, answers.get(q.getId()));
+                int maxPts = q.getPoints() != null ? q.getPoints() : 0;
+                TestSessionAnswer saved = byQuestion.get(q.getId());
+                int earned = estimateEarned(q, saved);
                 results.add(AntiCheatReportDto.QuestionResult.builder()
                     .questionId(q.getId()).title(q.getTitle() != null ? q.getTitle() : "Question")
                     .type(q.getKind() != null ? q.getKind().name() : "QCM")
@@ -449,93 +612,17 @@ public class TestSessionService {
         return results;
     }
 
-    private int scoreQuestion(Question q, Object rawAnswer,
-                              Map<String, Object> answers, SubmitTestRequest req) {
-        if (rawAnswer == null) return 0;
-        int max = q.getPoints() != null ? q.getPoints() : 10;
-        try {
-            if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING)
-                return scoreProblemSolving(q, rawAnswer, answers, max);
-            return scoreQcm(q, rawAnswer, max);
-        } catch (Exception e) {
-            log.warn("Error scoring question {}: {}", q.getId(), e.getMessage());
-            return 0;
+    private int estimateEarned(Question q, TestSessionAnswer saved) {
+        if (saved == null) return 0;
+        if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING) {
+            return saved.getTestCaseResults().stream()
+                    .filter(TestCaseResult::isPassed)
+                    .mapToInt(TestCaseResult::getEarnedPoints).sum();
         }
+        return 0;
     }
 
-    @SuppressWarnings("unchecked")
-    private int scoreProblemSolving(Question q, Object rawAnswer,
-                                    Map<String, Object> answers, int maxPts) {
-        Map<String, Object> ans;
-        try {
-            ans = objectMapper.readValue(objectMapper.writeValueAsString(rawAnswer), new TypeReference<>() {});
-        } catch (Exception e) { return 0; }
-
-        String code     = (String) ans.getOrDefault("code", "");
-        String language = (String) ans.getOrDefault("language", "python");
-        if (code == null || code.isBlank()) return 0;
-
-        List<RunCodeRequest.TestCasePayload> cases = (q.getTestCases() != null)
-                ? q.getTestCases().stream()
-                    .map(tc -> new RunCodeRequest.TestCasePayload(tc.getInput(), tc.getOutput(), tc.getPoints(), tc.isVisible()))
-                    .collect(Collectors.toList())
-                : List.of();
-        if (cases.isEmpty()) return 0;
-
-        List<TestCaseResultDto> results = codeExecutionService.execute(code, language, cases);
-        int earned = results.stream().filter(TestCaseResultDto::isPassed).mapToInt(TestCaseResultDto::getEarnedPoints).sum();
-
-        List<Map<String, Object>> testResultsToSave = results.stream().map(r -> {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("input", r.getInput()); m.put("expected", r.getExpected()); m.put("actual", r.getActual());
-            m.put("passed", r.isPassed()); m.put("points", r.getPoints()); m.put("earnedPoints", r.getEarnedPoints());
-            m.put("executionMs", r.getExecutionMs()); m.put("isVisible", true); m.put("error", r.getError());
-            return m;
-        }).collect(Collectors.toList());
-
-        Map<String, Object> enrichedAns = new LinkedHashMap<>(ans);
-        enrichedAns.put("testResults", testResultsToSave);
-        answers.put(q.getId(), enrichedAns);
-
-        log.info("Question {} — code scored: {}/{} pts", q.getId(), earned, maxPts);
-        return Math.min(earned, maxPts);
-    }
-
-    @SuppressWarnings("unchecked")
-    private int scoreQcm(Question q, Object rawAnswer, int maxPts) {
-        String qType = q.getQuestionType() != null ? q.getQuestionType().name() : null;
-        if (qType == null) return 0;
-        List<Question.QcmOption> opts = q.getQcmOptions() != null ? q.getQcmOptions() : List.of();
-
-        return switch (qType) {
-            case "RADIO" -> {
-                String selected = rawAnswer.toString();
-                yield opts.stream()
-                        .filter(o -> o.getId() == null || selected.equals(o.getId()))
-                        .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0)
-                        .findFirst().orElse(0);
-            }
-            case "CHECKBOX" -> {
-                List<String> selected;
-                try {
-                    selected = objectMapper.readValue(objectMapper.writeValueAsString(rawAnswer), new TypeReference<>() {});
-                } catch (Exception e) { yield 0; }
-                yield opts.stream()
-                        .filter(o -> selected.contains(o.getId()) || selected.contains(o.getText()))
-                        .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
-            }
-            case "LIKERT" -> {
-                int val = Integer.parseInt(rawAnswer.toString());
-                int idx = val - 1;
-                if (q.getLikertPoints() != null && idx >= 0 && idx < q.getLikertPoints().size())
-                    yield q.getLikertPoints().get(idx);
-                yield 0;
-            }
-            default -> 0;
-        };
-    }
-
-    private SimpleQuestionDto mapToTechnicalDto(Question q, Object savedAnswer) {
+    private SimpleQuestionDto mapToTechnicalDto(Question q, TestSessionAnswer savedAnswer) {
         List<TestCaseDto> cases = null;
         if (q.getTestCases() != null) {
             cases = q.getTestCases().stream()
@@ -556,6 +643,20 @@ public class TestSessionService {
                     .collect(Collectors.toList());
         }
 
+        Object savedValue = null;
+        if (savedAnswer != null) {
+            if (savedAnswer.getSubmittedCode() != null) {
+                Map<String, Object> codeMap = new LinkedHashMap<>();
+                codeMap.put("code", savedAnswer.getSubmittedCode());
+                codeMap.put("language", savedAnswer.getSubmittedLanguage());
+                savedValue = codeMap;
+            } else if (savedAnswer.getLikertValue() != null) {
+                savedValue = savedAnswer.getLikertValue();
+            } else if (!savedAnswer.getSelectedOptionIds().isEmpty()) {
+                savedValue = savedAnswer.getSelectedOptionIds();
+            }
+        }
+
         return SimpleQuestionDto.builder()
                 .id(q.getId()).title(q.getTitle()).statement(q.getStatement())
                 .points(q.getPoints() != null ? q.getPoints() : 10)
@@ -570,7 +671,7 @@ public class TestSessionService {
                 .options(options).likertPoints(q.getLikertPoints())
                 .imageUrl(q.getImagePath() != null
                         ? baseUrl + "/api/v1/job-tests/simple-questions/" + q.getId() + "/image" : null)
-                .savedAnswer(savedAnswer).build();
+                .savedAnswer(savedValue).build();
     }
 
     private com.nexgenai.dto.test.QuestionDto mapRhQuestion(Question q) {
@@ -605,113 +706,12 @@ public class TestSessionService {
         return AntiCheatRiskLevel.LOW;
     }
 
-    @SuppressWarnings("unchecked")
-    private int estimateEarnedFromAnswer(Question q, Object rawAnswer) {
-        if (rawAnswer == null) return 0;
-        if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING && rawAnswer instanceof Map<?,?> m) {
-            Object tcrRaw = ((Map<String,Object>) m).get("testResults");
-            if (tcrRaw instanceof List<?> list) {
-                return list.stream()
-                        .filter(item -> item instanceof Map<?,?> tc && Boolean.TRUE.equals(((Map<?,?>) tc).get("passed")))
-                        .mapToInt(item -> {
-                            Object ep = ((Map<?,?>) item).get("earnedPoints");
-                            return ep instanceof Number n ? n.intValue() : 0;
-                        }).sum();
-            }
+    private LocalDateTime parseTimestamp(String ts) {
+        if (ts == null || ts.isBlank()) return LocalDateTime.now();
+        try { return OffsetDateTime.parse(ts).toLocalDateTime(); }
+        catch (DateTimeParseException e) {
+            try { return LocalDateTime.parse(ts); }
+            catch (Exception e2) { return LocalDateTime.now(); }
         }
-        return 0;
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // PER-ANSWER EVALUATOR DECISIONS
-    // ══════════════════════════════════════════════════════════════════════════
-
-    @Transactional
-    public AnswerDecisionResponse setAnswerDecision(String assessmentId, String candidateId,
-                                                    String questionId, AnswerDecisionRequest req) {
-        TestSession session = testSessionRepository
-                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
-
-        Map<String, Object> decisions = parseDecisions(session.getDecisionsJson());
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("decision",     req.getDecision());
-        entry.put("note",         req.getNote());
-        entry.put("manualPoints", req.getManualPoints());
-        decisions.put(questionId, entry);
-
-        try { session.setDecisionsJson(objectMapper.writeValueAsString(decisions)); }
-        catch (Exception e) { throw new RuntimeException("Could not serialize decisions", e); }
-        testSessionRepository.save(session);
-
-        return AnswerDecisionResponse.builder()
-                .questionId(questionId).decision(req.getDecision())
-                .note(req.getNote()).manualPoints(req.getManualPoints()).build();
-    }
-
-    @Transactional
-    public void removeAnswerDecision(String assessmentId, String candidateId, String questionId) {
-        TestSession session = testSessionRepository
-                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
-
-        Map<String, Object> decisions = parseDecisions(session.getDecisionsJson());
-        decisions.remove(questionId);
-        try { session.setDecisionsJson(objectMapper.writeValueAsString(decisions)); }
-        catch (Exception e) { throw new RuntimeException("Could not serialize decisions", e); }
-        testSessionRepository.save(session);
-    }
-
-    @Transactional(readOnly = true)
-    public Map<String, AnswerDecisionResponse> getAnswerDecisions(String assessmentId, String candidateId) {
-        TestSession session = testSessionRepository
-                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
-        return buildDecisionMap(session.getDecisionsJson());
-    }
-
-    @SuppressWarnings("unchecked")
-    public Map<String, AnswerDecisionResponse> buildDecisionMap(String decisionsJson) {
-        Map<String, Object> raw = parseDecisions(decisionsJson);
-        Map<String, AnswerDecisionResponse> result = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> e : raw.entrySet()) {
-            if (e.getValue() instanceof Map<?, ?> m) {
-                Map<String, Object> d = (Map<String, Object>) m;
-                Object mp = d.get("manualPoints");
-                result.put(e.getKey(), AnswerDecisionResponse.builder()
-                        .questionId(e.getKey())
-                        .decision(d.get("decision") != null ? d.get("decision").toString() : null)
-                        .note(d.get("note") != null ? d.get("note").toString() : null)
-                        .manualPoints(mp instanceof Number n ? n.intValue() : null).build());
-            }
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> parseSavedAnswers(String json) {
-        if (json == null || json.isBlank()) return new LinkedHashMap<>();
-        try { return objectMapper.readValue(json, new TypeReference<>() {}); }
-        catch (Exception e) { return new LinkedHashMap<>(); }
-    }
-
-    private Map<String, Object> parseDecisions(String json) {
-        if (json == null || json.isBlank()) return new LinkedHashMap<>();
-        try { return objectMapper.readValue(json, new TypeReference<>() {}); }
-        catch (Exception e) { return new LinkedHashMap<>(); }
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> parseAntiCheatLog(String json) {
-        if (json == null || json.isBlank()) return new ArrayList<>();
-        try { return objectMapper.readValue(json, new TypeReference<>() {}); }
-        catch (Exception e) { return new ArrayList<>(); }
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<AntiCheatEventDto> parseAntiCheatEvents(String json) {
-        if (json == null || json.isBlank()) return new ArrayList<>();
-        try { return objectMapper.readValue(json, new TypeReference<>() {}); }
-        catch (Exception e) { return new ArrayList<>(); }
     }
 }
