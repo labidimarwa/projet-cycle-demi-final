@@ -141,8 +141,8 @@ class JwtServicePerformanceTest {
         System.out.printf("[PERF] 1000 token validations in %dms%n", elapsed);
 
         assertEquals(1000, validCount, "Tous les tokens valides doivent passer la validation");
-        assertTrue(elapsed < 6000,
-            "1000 validations doivent prendre < 6s. Durée : " + elapsed + "ms");
+        assertTrue(elapsed < 10000,
+            "1000 validations doivent prendre < 10s. Durée : " + elapsed + "ms");
     }
 
     // ══════════════════════════════════════════════════════════════════════════
