@@ -4,6 +4,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import com.nexgenai.dto.jobtest.JobTestDtos.*;
+import com.nexgenai.dto.hr.AnswerDecisionRequest;
+import com.nexgenai.dto.hr.AnswerDecisionResponse;
 import com.nexgenai.dto.hr.ApplicationDecisionRequest;
 import com.nexgenai.dto.hr.ApplicationDecisionResponse;
 import com.nexgenai.repository.UserRepository;
@@ -70,6 +72,28 @@ public class JobTestController {
             @PathVariable String testId,
             @PathVariable String candidateId) {
         return ResponseEntity.ok(resultsSvc.getCandidateFullResult(testId, candidateId));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PER-ANSWER EVALUATOR DECISIONS
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @PostMapping("/{testId}/candidates/{candidateId}/answers/{questionId}/decision")
+    public ResponseEntity<AnswerDecisionResponse> setAnswerDecision(
+            @PathVariable String testId,
+            @PathVariable String candidateId,
+            @PathVariable String questionId,
+            @RequestBody AnswerDecisionRequest req) {
+        return ResponseEntity.ok(sessionSvc.setAnswerDecision(testId, candidateId, questionId, req));
+    }
+
+    @DeleteMapping("/{testId}/candidates/{candidateId}/answers/{questionId}/decision")
+    public ResponseEntity<Void> removeAnswerDecision(
+            @PathVariable String testId,
+            @PathVariable String candidateId,
+            @PathVariable String questionId) {
+        sessionSvc.removeAnswerDecision(testId, candidateId, questionId);
+        return ResponseEntity.noContent().build();
     }
 
     // ══════════════════════════════════════════════════════════════════════════

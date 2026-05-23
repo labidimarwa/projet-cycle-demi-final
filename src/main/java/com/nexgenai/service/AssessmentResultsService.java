@@ -2,6 +2,7 @@ package com.nexgenai.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexgenai.dto.hr.AnswerDecisionResponse;
 import com.nexgenai.dto.jobtest.JobTestDtos.*;
 import com.nexgenai.model.*;
 import com.nexgenai.repository.*;
@@ -172,7 +173,8 @@ public class AssessmentResultsService {
                         .questionType("RADIO").points(maxPts).earnedPoints(qEarned)
                         .orderIndex(q.getOrderIndex() != null ? q.getOrderIndex() : 0)
                         .imageUrl(imageUrl).options(optionResponses)
-                        .likertPoints(List.of()).testCases(List.of()).build());
+                        .likertPoints(List.of()).testCases(List.of())
+                        .answerDecision(null).answerNote(null).manualPoints(null).build());
                 }
 
                 themeTotal += modelEarned; themeMax += modelMaxPts;
@@ -282,6 +284,7 @@ public class AssessmentResultsService {
                 "Session not found for assessmentId=" + assessmentId + " candidateId=" + candidateId));
 
         Map<String, Object> answersMap = parseSavedAnswers(session.getAnswersJson());
+        Map<String, AnswerDecisionResponse> decisionsMap = parseDecisions(session.getDecisionsJson());
         List<ThemeAnswersResponse> themeAnswers = new ArrayList<>();
         int totalEarned = 0, totalMax = 0;
 
@@ -321,7 +324,8 @@ public class AssessmentResultsService {
                 List<QuestionAnswerResponse> qResponses = new ArrayList<>();
                 int themeEarned = 0, themeMax = 0;
                 for (Question q : themeQs) {
-                    QuestionAnswerResponse qr = buildQuestionAnswerResponse(q, answersMap.get(q.getId()));
+                    QuestionAnswerResponse qr = buildQuestionAnswerResponse(
+                            q, answersMap.get(q.getId()), decisionsMap.get(q.getId()));
                     qResponses.add(qr); themeEarned += qr.getEarnedPoints(); themeMax += qr.getPoints();
                 }
 
@@ -359,7 +363,8 @@ public class AssessmentResultsService {
     // ══════════════════════════════════════════════════════════════════════════
 
     @SuppressWarnings("unchecked")
-    private QuestionAnswerResponse buildQuestionAnswerResponse(Question q, Object rawAnswer) {
+    private QuestionAnswerResponse buildQuestionAnswerResponse(Question q, Object rawAnswer,
+                                                               AnswerDecisionResponse decision) {
         QuestionAnswerResponse.QuestionAnswerResponseBuilder b = QuestionAnswerResponse.builder()
             .questionId(q.getId()).title(q.getTitle() != null ? q.getTitle() : "")
             .statement(stripHtml(q.getStatement() != null ? q.getStatement() : q.getText()))
@@ -367,7 +372,10 @@ public class AssessmentResultsService {
             .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : "RADIO")
             .complexity(q.getComplexity()).timeLimit(q.getTimeLimit()).memoryLimit(q.getMemoryLimit())
             .points(q.getPoints() != null ? q.getPoints() : 0)
-            .orderIndex(q.getOrderIndex() != null ? q.getOrderIndex() : 0);
+            .orderIndex(q.getOrderIndex() != null ? q.getOrderIndex() : 0)
+            .answerDecision(decision != null ? decision.getDecision() : null)
+            .answerNote(decision != null ? decision.getNote() : null)
+            .manualPoints(decision != null ? decision.getManualPoints() : null);
 
         if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING) {
             String code = null, language = null;
@@ -475,6 +483,27 @@ public class AssessmentResultsService {
         if (json == null || json.isBlank()) return new LinkedHashMap<>();
         try { return objectMapper.readValue(json, new TypeReference<>() {}); }
         catch (Exception e) { return new LinkedHashMap<>(); }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, AnswerDecisionResponse> parseDecisions(String json) {
+        if (json == null || json.isBlank()) return new LinkedHashMap<>();
+        Map<String, AnswerDecisionResponse> result = new LinkedHashMap<>();
+        try {
+            Map<String, Object> raw = objectMapper.readValue(json, new TypeReference<>() {});
+            for (Map.Entry<String, Object> e : raw.entrySet()) {
+                if (e.getValue() instanceof Map<?, ?> m) {
+                    Map<String, Object> d = (Map<String, Object>) m;
+                    Object mp = d.get("manualPoints");
+                    result.put(e.getKey(), AnswerDecisionResponse.builder()
+                            .questionId(e.getKey())
+                            .decision(d.get("decision") != null ? d.get("decision").toString() : null)
+                            .note(d.get("note") != null ? d.get("note").toString() : null)
+                            .manualPoints(mp instanceof Number n ? n.intValue() : null).build());
+                }
+            }
+        } catch (Exception e) { /* return empty */ }
+        return result;
     }
 
     private String stripHtml(String html) {

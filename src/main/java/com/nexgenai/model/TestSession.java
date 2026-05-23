@@ -99,6 +99,14 @@ public class TestSession {
     @Builder.Default
     private String answersJson = "{}";
 
+    /**
+     * Evaluator per-answer decisions: Map&lt;questionId, AnswerDecisionData&gt;.
+     * Each entry holds decision (APPROVED/REJECTED), optional note, optional manual point override.
+     */
+    @Column(name = "decisions_json", columnDefinition = "TEXT")
+    @Builder.Default
+    private String decisionsJson = "{}";
+
     // ── Anti-Cheat ────────────────────────────────────────────────────────────
 
     /** JSON array of granular anti-cheat events. */

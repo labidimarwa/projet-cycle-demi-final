@@ -451,6 +451,11 @@ public class JobTestDtos {
         private String                       submittedCode;
         private String                       submittedLanguage;
         private List<TestCaseAnswerResponse> testCases;
+
+        // Evaluator per-answer decision
+        private String  answerDecision;  // APPROVED | REJECTED | null
+        private String  answerNote;
+        private Integer manualPoints;
     }
 
     /**

@@ -53,4 +53,8 @@ public interface TestSessionRepository extends JpaRepository<TestSession, String
     // ── By type ──────────────────────────────────────────────────────────────
 
     List<TestSession> findByType(AssessmentType type);
+
+    // ── By status ─────────────────────────────────────────────────────────────
+
+    List<TestSession> findByStatus(TestSession.SessionStatus status);
 }

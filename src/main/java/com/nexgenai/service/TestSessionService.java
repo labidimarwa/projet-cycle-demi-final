@@ -2,6 +2,8 @@ package com.nexgenai.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexgenai.dto.hr.AnswerDecisionRequest;
+import com.nexgenai.dto.hr.AnswerDecisionResponse;
 import com.nexgenai.dto.jobtest.JobTestDtos.*;
 import com.nexgenai.dto.technicaltest.*;
 import com.nexgenai.model.*;
@@ -620,8 +622,80 @@ public class TestSessionService {
         return 0;
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // PER-ANSWER EVALUATOR DECISIONS
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Transactional
+    public AnswerDecisionResponse setAnswerDecision(String assessmentId, String candidateId,
+                                                    String questionId, AnswerDecisionRequest req) {
+        TestSession session = testSessionRepository
+                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
+                .orElseThrow(() -> new RuntimeException("Session not found"));
+
+        Map<String, Object> decisions = parseDecisions(session.getDecisionsJson());
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("decision",     req.getDecision());
+        entry.put("note",         req.getNote());
+        entry.put("manualPoints", req.getManualPoints());
+        decisions.put(questionId, entry);
+
+        try { session.setDecisionsJson(objectMapper.writeValueAsString(decisions)); }
+        catch (Exception e) { throw new RuntimeException("Could not serialize decisions", e); }
+        testSessionRepository.save(session);
+
+        return AnswerDecisionResponse.builder()
+                .questionId(questionId).decision(req.getDecision())
+                .note(req.getNote()).manualPoints(req.getManualPoints()).build();
+    }
+
+    @Transactional
+    public void removeAnswerDecision(String assessmentId, String candidateId, String questionId) {
+        TestSession session = testSessionRepository
+                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
+                .orElseThrow(() -> new RuntimeException("Session not found"));
+
+        Map<String, Object> decisions = parseDecisions(session.getDecisionsJson());
+        decisions.remove(questionId);
+        try { session.setDecisionsJson(objectMapper.writeValueAsString(decisions)); }
+        catch (Exception e) { throw new RuntimeException("Could not serialize decisions", e); }
+        testSessionRepository.save(session);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, AnswerDecisionResponse> getAnswerDecisions(String assessmentId, String candidateId) {
+        TestSession session = testSessionRepository
+                .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
+                .orElseThrow(() -> new RuntimeException("Session not found"));
+        return buildDecisionMap(session.getDecisionsJson());
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, AnswerDecisionResponse> buildDecisionMap(String decisionsJson) {
+        Map<String, Object> raw = parseDecisions(decisionsJson);
+        Map<String, AnswerDecisionResponse> result = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : raw.entrySet()) {
+            if (e.getValue() instanceof Map<?, ?> m) {
+                Map<String, Object> d = (Map<String, Object>) m;
+                Object mp = d.get("manualPoints");
+                result.put(e.getKey(), AnswerDecisionResponse.builder()
+                        .questionId(e.getKey())
+                        .decision(d.get("decision") != null ? d.get("decision").toString() : null)
+                        .note(d.get("note") != null ? d.get("note").toString() : null)
+                        .manualPoints(mp instanceof Number n ? n.intValue() : null).build());
+            }
+        }
+        return result;
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> parseSavedAnswers(String json) {
+        if (json == null || json.isBlank()) return new LinkedHashMap<>();
+        try { return objectMapper.readValue(json, new TypeReference<>() {}); }
+        catch (Exception e) { return new LinkedHashMap<>(); }
+    }
+
+    private Map<String, Object> parseDecisions(String json) {
         if (json == null || json.isBlank()) return new LinkedHashMap<>();
         try { return objectMapper.readValue(json, new TypeReference<>() {}); }
         catch (Exception e) { return new LinkedHashMap<>(); }
