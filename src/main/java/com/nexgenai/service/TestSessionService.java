@@ -204,7 +204,7 @@ public class TestSessionService {
     // RH SESSION
     // ══════════════════════════════════════════════════════════════════════════
 
-    @Transactional(readOnly = true)
+    @Transactional
     public com.nexgenai.dto.test.TestSessionDto getRhTestSession(String assessmentId, String sessionId, String email) {
         Candidate candidate = candidateRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("Candidate not found"));
