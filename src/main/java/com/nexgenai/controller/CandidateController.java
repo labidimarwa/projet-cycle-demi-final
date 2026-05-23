@@ -9,22 +9,14 @@ import com.nexgenai.dto.candidate.UpdateCandidateProfileRequest;
 import com.nexgenai.dto.technicaltest.AntiCheatEventDto;
 import com.nexgenai.dto.technicaltest.AntiCheatReportDto;
 import com.nexgenai.model.ApplicationStageProgress;
-import com.nexgenai.model.Assessment;
-import com.nexgenai.model.Candidate;
 import com.nexgenai.model.JobMatch;
-import com.nexgenai.model.TestSession;
-import com.nexgenai.model.enums.AssessmentType;
-import com.nexgenai.repository.AssessmentRepository;
-import com.nexgenai.repository.CandidateRepository;
-import com.nexgenai.repository.TestSessionRepository;
 import com.nexgenai.service.AntiCheatService;
 import com.nexgenai.service.ApplicationService;
 import com.nexgenai.service.ApplicationStageProgressService;
-import com.nexgenai.service.AssessmentService;
-import com.nexgenai.service.CandidateApplicationService;
 import com.nexgenai.service.CandidateService;
 import com.nexgenai.service.ChatbotService;
 import com.nexgenai.service.MatchingService;
+import com.nexgenai.service.TestSessionService;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +32,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.file.Path;
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -60,11 +51,8 @@ public class CandidateController {
     private final ApplicationService              applicationService;
     private final ChatbotService                  chatbotService;
     private final ApplicationStageProgressService stageProgressService;
-    private final CandidateRepository             candidateRepository;
     private final MatchingService                 matchingService;
-    private final AssessmentRepository            assessmentRepository;      // was JobTestRepository
-    private final TestSessionRepository           testSessionRepository;     // unified
-    private final AssessmentService               assessmentService;         // was TechnicalTestService
+    private final TestSessionService              testSessionService;
     private final AntiCheatService                antiCheatService;
 
     // ── Profile ───────────────────────────────────────────────────────────────
@@ -150,11 +138,9 @@ public class CandidateController {
             @AuthenticationPrincipal UserDetails u,
             @PathVariable String jobId) {
 
-        Candidate candidate = candidateRepository.findByEmail(u.getUsername())
-                .orElseThrow(() -> new RuntimeException("Candidate not found"));
-
+        String candidateId = candidateService.getProfile(u.getUsername()).getId();
         List<ApplicationStageProgress> rows =
-                stageProgressService.getProgress(candidate.getId(), jobId);
+                stageProgressService.getProgress(candidateId, jobId);
 
         List<StageProgressDTO> dtos = rows.stream()
                 .map(p -> new StageProgressDTO(
@@ -260,37 +246,7 @@ public class CandidateController {
     public ResponseEntity<Map<String, String>> startTest(
             @PathVariable String testId,
             @AuthenticationPrincipal UserDetails userDetails) {
-
-        String candidateId = getCandidateId(userDetails.getUsername());
-
-        var candidate = candidateRepository.findById(candidateId)
-                .orElseThrow(() -> new RuntimeException("Candidate not found"));
-        var assessment = assessmentRepository.findById(testId)
-                .orElseThrow(() -> new RuntimeException("Assessment not found: " + testId));
-
-        TestSession session = testSessionRepository
-                .findByCandidateIdAndAssessmentId(candidateId, testId)
-                .orElseGet(() -> {
-                    TestSession s = TestSession.builder()
-                            .candidate(candidate)
-                            .assessment(assessment)
-                            .type(assessment.getType())
-                            .status(TestSession.SessionStatus.IN_PROGRESS)
-                            .startedAt(LocalDateTime.now())
-                            .build();
-                    return testSessionRepository.save(s);
-                });
-
-        if (session.getStatus() == TestSession.SessionStatus.PENDING) {
-            session.setStatus(TestSession.SessionStatus.IN_PROGRESS);
-            session.setStartedAt(LocalDateTime.now());
-            testSessionRepository.save(session);
-        }
-
-        return ResponseEntity.ok(Map.of(
-                "sessionId", session.getId(),
-                "status",    session.getStatus().name()
-        ));
+        return ResponseEntity.ok(testSessionService.startOrGetSession(testId, userDetails.getUsername()));
     }
 
     // ── Endpoint anti-cheat ───────────────────────────────────────────────────
@@ -327,11 +283,8 @@ public class CandidateController {
             @PathVariable String jobId) {
         try {
             log.info("🎯 Compute match: {} ↔ {}", u.getUsername(), jobId);
-            
-            // Vérifications rapides avant de lancer l'async
-            Candidate c = candidateRepository.findByEmail(u.getUsername())
-                .orElseThrow(() -> new RuntimeException("Candidate not found"));
-            if (c.getCvPath() == null)
+            var profile = candidateService.getProfile(u.getUsername());
+            if (profile.getCvPath() == null)
                 return ResponseEntity.badRequest().body(Map.of("error", "No CV uploaded"));
 
             // Lance Ollama en arrière-plan, répond immédiatement
@@ -347,11 +300,5 @@ public class CandidateController {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
-    // ── Helper ────────────────────────────────────────────────────────────────
-
-    private String getCandidateId(String email) {
-        return candidateRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("Candidate not found: " + email))
-                .getId();
-    }
 }
+

@@ -6,13 +6,9 @@ import com.nexgenai.repository.ApplicationRepository;
 import com.nexgenai.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.nio.file.*;
 
 /**
  * Handles candidate applications.
@@ -26,10 +22,8 @@ public class ApplicationService {
     private final ApplicationRepository           applicationRepository;
     private final UserRepository                  userRepository;
     private final MatchingService                 matchingService;
-    private final ApplicationStageProgressService stageProgressService;  // ← NEW
-
-    @Value("${app.cv.upload-dir:uploads/cv}")
-    private String uploadDir;
+    private final ApplicationStageProgressService stageProgressService;
+    private final FileStorageService              fileStorageService;
 
     @Transactional
     public void submitApplication(String candidateEmail, String jobId,
@@ -49,7 +43,7 @@ public class ApplicationService {
 
         // Persist CV if provided
         if (cv != null && !cv.isEmpty()) {
-            String cvPath = saveCv(candidateEmail, cv);
+            String cvPath = fileStorageService.saveFile(candidateEmail, cv);
             builder.cvPath(cvPath);
             candidate.setCvPath(cvPath);
             userRepository.save(candidate);
@@ -69,28 +63,6 @@ public class ApplicationService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private String saveCv(String email, MultipartFile file) {
-        String originalName = file.getOriginalFilename() != null
-            ? file.getOriginalFilename() : "cv.pdf";
-        String ext = originalName.contains(".")
-            ? originalName.substring(originalName.lastIndexOf(".")).toLowerCase() : ".pdf";
-        if (!java.util.List.of(".pdf", ".doc", ".docx").contains(ext))
-            throw new RuntimeException("Unsupported format.");
-        if (file.getSize() > 5 * 1024 * 1024)
-            throw new RuntimeException("File too large (max 5 MB).");
-        try {
-            Path dir = Paths.get(uploadDir).toAbsolutePath();
-            Files.createDirectories(dir);
-            String safeEmail = email.replaceAll("[^a-zA-Z0-9._-]", "_");
-            String fileName  = safeEmail + ext;
-            Files.copy(file.getInputStream(), dir.resolve(fileName),
-                       StandardCopyOption.REPLACE_EXISTING);
-            return originalName + "|" + fileName;
-        } catch (IOException e) {
-            throw new RuntimeException("CV upload error: " + e.getMessage(), e);
-        }
-    }
 
     private Candidate findCandidate(String email) {
         return userRepository.findByEmail(email)

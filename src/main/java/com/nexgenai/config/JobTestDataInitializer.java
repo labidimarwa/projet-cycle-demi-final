@@ -1,28 +1,21 @@
 package com.nexgenai.config;
 
-import com.nexgenai.service.AssessmentService;
+import com.nexgenai.service.AssessmentCrudService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
-
-/**
- * Runs once at startup to seed built-in psychometric models (DISC, Big Five, EQ-i, MBTI).
- *
- * Phase 2 refactoring: delegates to the unified {@link AssessmentService}
- * instead of the now-removed {@code JobTestService}.
- */
 
 @Profile("!test")
 @Component
 @RequiredArgsConstructor
 public class JobTestDataInitializer implements CommandLineRunner {
 
-    private final AssessmentService assessmentService;
+    private final AssessmentCrudService assessmentCrudService;
 
     @Override
     public void run(String... args) {
-        assessmentService.initBuiltInModels();
+        assessmentCrudService.initBuiltInModels();
     }
 }
 

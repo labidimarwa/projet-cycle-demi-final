@@ -7,8 +7,10 @@ import com.nexgenai.dto.jobtest.JobTestDtos.*;
 import com.nexgenai.dto.hr.ApplicationDecisionRequest;
 import com.nexgenai.dto.hr.ApplicationDecisionResponse;
 import com.nexgenai.repository.UserRepository;
-import com.nexgenai.service.AssessmentService;
+import com.nexgenai.service.AssessmentCrudService;
+import com.nexgenai.service.AssessmentResultsService;
 import com.nexgenai.service.HrService;
+import com.nexgenai.service.TestSessionService;
 import com.nexgenai.dto.technicaltest.AntiCheatReportDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -28,9 +30,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class JobTestController {
 
-    private final AssessmentService svc;
-    private final UserRepository    userRepository;
-    private final HrService         hrService;
+    private final AssessmentCrudService    crudSvc;
+    private final AssessmentResultsService resultsSvc;
+    private final TestSessionService       sessionSvc;
+    private final UserRepository           userRepository;
+    private final HrService                hrService;
 
     // ══════════════════════════════════════════════════════════════════════════
     // ANTI-CHEAT (accessible aux évaluateurs)
@@ -39,7 +43,7 @@ public class JobTestController {
     @GetMapping("/sessions/{sessionId}/anti-cheat")
     public ResponseEntity<AntiCheatReportDto> getAntiCheatReportForEvaluator(
             @PathVariable String sessionId) {
-        return ResponseEntity.ok(svc.getAntiCheatReport(sessionId));
+        return ResponseEntity.ok(sessionSvc.getAntiCheatReport(sessionId));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -52,7 +56,7 @@ public class JobTestController {
             @PathVariable String candidateId,
             @RequestBody ApplicationDecisionRequest req) {
 
-        JobTestResponse testResponse = svc.getTest(testId);
+        JobTestResponse testResponse = crudSvc.getTest(testId);
         String jobId = testResponse.getJobId();
         return ResponseEntity.ok(hrService.decide(jobId, candidateId, req));
     }
@@ -65,7 +69,7 @@ public class JobTestController {
     public ResponseEntity<CandidateFullResultResponse> getCandidateFullResult(
             @PathVariable String testId,
             @PathVariable String candidateId) {
-        return ResponseEntity.ok(svc.getCandidateFullResult(testId, candidateId));
+        return ResponseEntity.ok(resultsSvc.getCandidateFullResult(testId, candidateId));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -87,7 +91,7 @@ public class JobTestController {
             .map(u -> u.getId())
             .orElse(null);
 
-        return ResponseEntity.ok(svc.getJobsWithTests(role, evaluatorId));
+        return ResponseEntity.ok(crudSvc.getJobsWithTests(role, evaluatorId));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -98,7 +102,7 @@ public class JobTestController {
     public ResponseEntity<JobTestResponse> configureFromStage(
             @RequestParam String workflowStageId,
             @RequestParam String jobId) {
-        return ResponseEntity.ok(svc.configureFromStage(workflowStageId, jobId));
+        return ResponseEntity.ok(crudSvc.configureFromStage(workflowStageId, jobId));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -107,12 +111,12 @@ public class JobTestController {
 
     @GetMapping("/models")
     public ResponseEntity<List<ModelResponse>> getAllModels() {
-        return ResponseEntity.ok(svc.getAllModels());
+        return ResponseEntity.ok(crudSvc.getAllModels());
     }
 
     @PostMapping("/models")
     public ResponseEntity<ModelResponse> createModel(@RequestBody CreateModelRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(svc.createModel(req));
+        return ResponseEntity.status(HttpStatus.CREATED).body(crudSvc.createModel(req));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -121,46 +125,46 @@ public class JobTestController {
 
     @GetMapping
     public ResponseEntity<List<JobTestResponse>> getAllTests() {
-        return ResponseEntity.ok(svc.getAllTests());
+        return ResponseEntity.ok(crudSvc.getAllTests());
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<JobTestResponse> getTest(@PathVariable String id) {
-        return ResponseEntity.ok(svc.getTest(id));
+        return ResponseEntity.ok(crudSvc.getTest(id));
     }
 
     @PostMapping
     public ResponseEntity<JobTestResponse> createTest(@RequestBody CreateTestRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(svc.createTest(req));
+        return ResponseEntity.status(HttpStatus.CREATED).body(crudSvc.createTest(req));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<JobTestResponse> updateTest(@PathVariable String id,
                                                       @RequestBody UpdateTestRequest req) {
-        return ResponseEntity.ok(svc.updateTest(id, req));
+        return ResponseEntity.ok(crudSvc.updateTest(id, req));
     }
 
     @PutMapping("/{id}/full")
     public ResponseEntity<JobTestResponse> saveFullTest(@PathVariable String id,
                                                         @RequestBody SaveFullTestRequest req) {
-        return ResponseEntity.ok(svc.saveFullTest(id, req));
+        return ResponseEntity.ok(crudSvc.saveFullTest(id, req));
     }
 
     @PatchMapping("/{id}/activate")
     public ResponseEntity<Void> activateTest(@PathVariable String id) {
-        svc.activateTest(id);
+        crudSvc.activateTest(id);
         return ResponseEntity.ok().build();
     }
 
     @PatchMapping("/{id}/archive")
     public ResponseEntity<Void> archiveTest(@PathVariable String id) {
-        svc.archiveTest(id);
+        crudSvc.archiveTest(id);
         return ResponseEntity.ok().build();
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteTest(@PathVariable String id) {
-        svc.deleteTest(id);
+        crudSvc.deleteTest(id);
         return ResponseEntity.noContent().build();
     }
 
@@ -171,13 +175,13 @@ public class JobTestController {
     @PostMapping("/{testId}/themes")
     public ResponseEntity<JobTestResponse> addTheme(@PathVariable String testId,
                                                     @RequestBody CreateThemeRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(svc.addTheme(testId, req));
+        return ResponseEntity.status(HttpStatus.CREATED).body(crudSvc.addTheme(testId, req));
     }
 
     @DeleteMapping("/{testId}/themes/{themeId}")
     public ResponseEntity<Void> deleteTheme(@PathVariable String testId,
                                             @PathVariable String themeId) {
-        svc.deleteTheme(testId, themeId);
+        crudSvc.deleteTheme(testId, themeId);
         return ResponseEntity.noContent().build();
     }
 
@@ -191,7 +195,7 @@ public class JobTestController {
             @PathVariable String themeId,
             @RequestBody AddModelRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(svc.addModelToTheme(testId, themeId, req));
+                .body(crudSvc.addModelToTheme(testId, themeId, req));
     }
 
     @PatchMapping("/{testId}/themes/{themeId}/models/{themeModelId}/weight")
@@ -200,7 +204,7 @@ public class JobTestController {
             @PathVariable String themeId,
             @PathVariable String themeModelId,
             @RequestBody UpdateWeightRequest req) {
-        svc.updateThemeModelWeight(testId, themeId, themeModelId, req);
+        crudSvc.updateThemeModelWeight(testId, themeId, themeModelId, req);
         return ResponseEntity.ok().build();
     }
 
@@ -209,7 +213,7 @@ public class JobTestController {
             @PathVariable String testId,
             @PathVariable String themeId,
             @PathVariable String themeModelId) {
-        svc.removeModelFromTheme(testId, themeId, themeModelId);
+        crudSvc.removeModelFromTheme(testId, themeId, themeModelId);
         return ResponseEntity.noContent().build();
     }
 
@@ -222,19 +226,19 @@ public class JobTestController {
             @PathVariable String themeModelId,
             @RequestBody CreateQuestionRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(svc.addPsychometricQuestion(themeModelId, req));
+                .body(crudSvc.addPsychometricQuestion(themeModelId, req));
     }
 
     @PutMapping("/questions/{questionId}")
     public ResponseEntity<QuestionResponse> updateQuestion(
             @PathVariable String questionId,
             @RequestBody CreateQuestionRequest req) {
-        return ResponseEntity.ok(svc.updatePsychometricQuestion(questionId, req));
+        return ResponseEntity.ok(crudSvc.updatePsychometricQuestion(questionId, req));
     }
 
     @DeleteMapping("/questions/{questionId}")
     public ResponseEntity<Void> deleteQuestion(@PathVariable String questionId) {
-        svc.deleteQuestion(questionId);
+        crudSvc.deleteQuestion(questionId);
         return ResponseEntity.noContent().build();
     }
 
@@ -243,7 +247,7 @@ public class JobTestController {
     public ResponseEntity<QuestionResponse> uploadImage(
             @PathVariable String questionId,
             @RequestParam("image") MultipartFile file) throws IOException {
-        return ResponseEntity.ok(svc.uploadQuestionImage(questionId, file));
+        return ResponseEntity.ok(crudSvc.uploadQuestionImage(questionId, file));
     }
 
     @GetMapping("/questions/{questionId}/image")
@@ -253,7 +257,7 @@ public class JobTestController {
 
     @DeleteMapping("/questions/{questionId}/image")
     public ResponseEntity<Void> deleteImage(@PathVariable String questionId) throws IOException {
-        svc.deleteQuestionImage(questionId);
+        crudSvc.deleteQuestionImage(questionId);
         return ResponseEntity.noContent().build();
     }
 
@@ -267,19 +271,19 @@ public class JobTestController {
             @RequestParam String type,
             @RequestBody SaveFullTestRequest.QuestionPayload req) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(svc.addSimpleQuestion(themeId, req, type));
+                .body(crudSvc.addSimpleQuestion(themeId, req, type));
     }
 
     @PutMapping("/simple-questions/{questionId}")
     public ResponseEntity<SimpleQuestionResponse> updateSimpleQuestion(
             @PathVariable String questionId,
             @RequestBody SaveFullTestRequest.QuestionPayload req) {
-        return ResponseEntity.ok(svc.updateSimpleQuestion(questionId, req));
+        return ResponseEntity.ok(crudSvc.updateSimpleQuestion(questionId, req));
     }
 
     @DeleteMapping("/simple-questions/{questionId}")
     public ResponseEntity<Void> deleteSimpleQuestion(@PathVariable String questionId) {
-        svc.deleteSimpleQuestion(questionId);
+        crudSvc.deleteSimpleQuestion(questionId);
         return ResponseEntity.noContent().build();
     }
 
@@ -290,14 +294,14 @@ public class JobTestController {
     @GetMapping("/{testId}/candidates")
     public ResponseEntity<TestCandidatesResponse> getCandidatesForTest(
             @PathVariable String testId) {
-        return ResponseEntity.ok(svc.getCandidatesForTest(testId));
+        return ResponseEntity.ok(resultsSvc.getCandidatesForTest(testId));
     }
 
     @GetMapping("/{testId}/candidates/{candidateId}")
     public ResponseEntity<CandidateTestResultResponse> getCandidateResult(
             @PathVariable String testId,
             @PathVariable String candidateId) {
-        return ResponseEntity.ok(svc.getCandidateResult(testId, candidateId));
+        return ResponseEntity.ok(resultsSvc.getCandidateResult(testId, candidateId));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -307,14 +311,14 @@ public class JobTestController {
     @GetMapping("/{testId}/rh-candidates")
     public ResponseEntity<TestCandidatesResponse> getRhCandidatesForTest(
             @PathVariable String testId) {
-        return ResponseEntity.ok(svc.getRhCandidatesForTest(testId));
+        return ResponseEntity.ok(resultsSvc.getRhCandidatesForTest(testId));
     }
 
     @GetMapping("/{testId}/rh-candidates/{candidateId}/result")
     public ResponseEntity<CandidateTestResultResponse> getRhCandidateResult(
             @PathVariable String testId,
             @PathVariable String candidateId) {
-        return ResponseEntity.ok(svc.getRhCandidateResult(testId, candidateId));
+        return ResponseEntity.ok(resultsSvc.getRhCandidateResult(testId, candidateId));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -324,13 +328,13 @@ public class JobTestController {
     @GetMapping("/{testId}/tech-candidates")
     public ResponseEntity<TestCandidatesResponse> getTechCandidatesForTest(
             @PathVariable String testId) {
-        return ResponseEntity.ok(svc.getTechCandidatesForTest(testId));
+        return ResponseEntity.ok(resultsSvc.getTechCandidatesForTest(testId));
     }
 
     @GetMapping("/{testId}/tech-candidates/{candidateId}/result")
     public ResponseEntity<CandidateTestResultResponse> getTechCandidateResult(
             @PathVariable String testId,
             @PathVariable String candidateId) {
-        return ResponseEntity.ok(svc.getTechCandidateResult(testId, candidateId));
+        return ResponseEntity.ok(resultsSvc.getTechCandidateResult(testId, candidateId));
     }
 }

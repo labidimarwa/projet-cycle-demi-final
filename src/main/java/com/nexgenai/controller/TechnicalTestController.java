@@ -1,7 +1,7 @@
 package com.nexgenai.controller;
 
 import com.nexgenai.dto.technicaltest.*;
-import com.nexgenai.service.AssessmentService;
+import com.nexgenai.service.TestSessionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -10,16 +10,12 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * Candidate-facing endpoints for technical tests.
- * Now delegates to the unified {@link AssessmentService}.
- */
 @RestController
 @RequestMapping("/candidate/technical-tests")
 @RequiredArgsConstructor
 public class TechnicalTestController {
 
-    private final AssessmentService svc;
+    private final TestSessionService svc;
 
     @PostMapping("/{testId}/session")
     public ResponseEntity<TechnicalSessionDto> startSession(

@@ -5,16 +5,15 @@ import com.nexgenai.dto.candidate.CandidateProfileResponse;
 import com.nexgenai.dto.candidate.StageProgressDTO;
 import com.nexgenai.dto.candidate.UpdateCandidateProfileRequest;
 import com.nexgenai.model.*;
+import com.nexgenai.model.enums.AssessmentType;
 import com.nexgenai.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.*;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -30,14 +29,13 @@ public class CandidateService {
     private final ApplicationRepository               applicationRepository;
     private final ApplicationStageProgressRepository  stageProgressRepository;
     private final MatchingService                     matchingService;
-    private final CandidateApplicationService    candidateApplicationService; // ✅ INJECTÉ
-
-
+    private final FileStorageService                  fileStorageService;
+    private final ChatSessionRepository               chatSessionRepository;
+    private final AssessmentRepository                assessmentRepository;
+    private final TestSessionRepository               testSessionRepository;
+    private final QuestionRepository                  questionRepository;
     // Injected to avoid circular dependency: CandidateService ↔ ApplicationStageProgressService
     private final ApplicationStageProgressService     stageProgressService;
-
-    @Value("${app.cv.upload-dir:uploads/cv}")
-    private String uploadDir;
 
     // ── Profile ───────────────────────────────────────────────────────────────
 
@@ -67,26 +65,21 @@ public class CandidateService {
     @Transactional
     public String uploadCv(String email, MultipartFile file) {
         Candidate c = findCandidate(email);
-        String cvPath = saveCvFile(email, file);
+        String cvPath = fileStorageService.saveFile(email, file);
         c.setCvPath(cvPath);
         userRepository.save(c);
         return cvPath;
-        // matching déclenché séparément ↓
     }
 
     public Path getCvFilePath(String email) {
         Candidate c = findCandidate(email);
         if (c.getCvPath() == null) throw new RuntimeException("No CV uploaded");
-        String[] parts = c.getCvPath().split("\\|");
-        String fileName = parts.length > 1 ? parts[1] : parts[0];
-        return Paths.get(uploadDir).toAbsolutePath().resolve(fileName);
+        return fileStorageService.getFilePath(c.getCvPath());
     }
 
     public String getCvDisplayName(String email) {
         Candidate c = findCandidate(email);
-        if (c.getCvPath() == null) return "cv.pdf";
-        String[] parts = c.getCvPath().split("\\|");
-        return parts[0];
+        return fileStorageService.getDisplayName(c.getCvPath());
     }
 
     // ── Match scores ──────────────────────────────────────────────────────────
@@ -116,115 +109,130 @@ public class CandidateService {
      * - test sessions
      * - stageProgress[] — the HR-defined workflow stages with live status
      */
-   /* @Transactional
-    public List<CandidateApplicationResponse> getApplications(String email) {
-        Candidate c = findCandidate(email);
-
-        return applicationRepository.findByCandidateId(c.getId()).stream()
-            .map(app -> buildApplicationResponse(c, app))
-            .collect(Collectors.toList());
-    }
-    */
-    
-    
     @Transactional(readOnly = true)
     public List<CandidateApplicationResponse> getApplications(String email) {
-    	   Candidate c = findCandidate(email);
-        return candidateApplicationService.getApplicationsForCandidate(c.getId());
+        Candidate c = findCandidate(email);
+        return getApplicationsForCandidate(c.getId());
     }
-    
 
-    // ── Build one application response ────────────────────────────────────────
+    // ── Applications: read-side logic (merged from CandidateApplicationService) ─
 
-    private CandidateApplicationResponse buildApplicationResponse(Candidate c, Application app) {
+    @Transactional(readOnly = true)
+    public List<CandidateApplicationResponse> getApplicationsForCandidate(String candidateId) {
+        List<Application> applications = applicationRepository.findByCandidateId(candidateId);
+        return applications.stream()
+                .map(app -> buildApplicationResponse(candidateId, app))
+                .collect(Collectors.toList());
+    }
 
-        // Job info
-        Job job = jobRepository.findById(app.getJobId()).orElse(null);
-        String jobTitle      = job != null ? job.getTitle()                  : "Unknown Job";
-        String department    = job != null ? job.getDepartment()             : "";
-        String location      = job != null ? job.getLocation()               : "";
-        String contractType  = job != null ? (job.getContractType()  != null ? job.getContractType().name()  : "") : "";
-        String expLevel      = job != null ? (job.getExperienceLevel()!= null ? job.getExperienceLevel().name(): "") : "";
+    private CandidateApplicationResponse buildApplicationResponse(String candidateId, Application app) {
+        String jobId = app.getJobId();
+        Job job = jobRepository.findById(jobId)
+                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
 
-        // Match score
-        Optional<JobMatch> match = jobMatchRepository
-            .findByCandidateIdAndJobId(c.getId(), app.getJobId());
-        Integer matchScore    = match.map(JobMatch::getScore).orElse(null);
-        boolean matchComputed = match.isPresent() && matchScore != null;
+        Optional<JobMatch> matchOpt = jobMatchRepository.findByCandidateIdAndJobId(candidateId, jobId);
+        Integer matchScore    = matchOpt.map(JobMatch::getScore).orElse(null);
+        boolean matchComputed = matchOpt.isPresent();
 
-        // Chat score (from ChatSession if done)
-        Integer chatScore = null;
-        boolean chatDone  = false;
-        // (wire to ChatSessionRepository if you have extractScore stored)
+        Optional<ChatSession> chatOpt = chatSessionRepository.findByCandidateIdAndJobId(candidateId, jobId);
+        boolean chatDone  = chatOpt.map(ChatSession::isDone).orElse(false);
+        Integer chatScore = chatOpt.map(ChatSession::getInterviewScore).orElse(null);
 
-        // Tests — wire to your TestSession / PsychometricTest repos here
-        List<CandidateApplicationResponse.JobTestInfo> tests = List.of();
+        List<Assessment> assessments = assessmentRepository.findByJobId(jobId);
+        List<CandidateApplicationResponse.JobTestInfo> testInfos = assessments.stream()
+                .map(a -> buildTestInfo(candidateId, a))
+                .collect(Collectors.toList());
 
-        // ── Stage progress (HR-defined process mapping) ───────────────────────
-        // getProgress seeds rows on first call if they don't exist yet
-        List<ApplicationStageProgress> rows =
-            stageProgressService.getProgress(c.getId(), app.getJobId());
+        List<StageProgressDTO> stages = loadStageProgress(candidateId, jobId);
 
-        List<StageProgressDTO> stageProgress = rows.stream()
-            .map(this::mapStageProgress)
-            .collect(Collectors.toList());
+        String status = "PENDING";
+        try {
+            if (app.getStatus() != null) status = app.getStatus().name();
+        } catch (Exception ignored) {}
 
         return CandidateApplicationResponse.builder()
-            .jobId(app.getJobId())
-            .jobTitle(jobTitle)
-            .department(department)
-            .location(location)
-            .contractType(contractType)
-            .experienceLevel(expLevel)
-            .applicationStatus(app.getStatus() != null ? app.getStatus().name() : "PENDING")
-            .appliedAt(app.getAppliedAt())
-            .matchScore(matchScore)
-            .matchComputed(matchComputed)
-            .chatDone(chatDone)
-            .chatScore(chatScore)
-            .tests(tests)
-            .stageProgress(stageProgress)
-            .build();
+                .jobId(jobId)
+                .jobTitle(job.getTitle())
+                .department(job.getDepartment())
+                .location(job.getLocation())
+                .contractType(job.getContractType() != null ? job.getContractType().name() : null)
+                .experienceLevel(job.getExperienceLevel() != null ? job.getExperienceLevel().name() : null)
+                .applicationStatus(status)
+                .appliedAt(app.getAppliedAt())
+                .matchScore(matchScore)
+                .matchComputed(matchComputed)
+                .chatDone(chatDone)
+                .chatScore(chatScore)
+                .tests(testInfos)
+                .stageProgress(stages)
+                .build();
     }
 
-    // ── Mapper ────────────────────────────────────────────────────────────────
+    private CandidateApplicationResponse.JobTestInfo buildTestInfo(String candidateId, Assessment assessment) {
+        String testCategory;
+        if (assessment.getType() == AssessmentType.TECHNICAL) {
+            testCategory = "TECHNICAL";
+        } else {
+            boolean hasTechnicalQuestions = assessment.getThemes().stream()
+                    .anyMatch(theme -> questionRepository.countByThemeId(theme.getId()) > 0);
+            testCategory = hasTechnicalQuestions ? "TECHNICAL" : "PSYCHOMETRIC";
+        }
 
-    private StageProgressDTO mapStageProgress(ApplicationStageProgress p) {
-        return new StageProgressDTO(
-            p.getId(),
-            p.getStageOrder(),
-            p.getStageName(),
-            p.getStageType(),
-            p.getStatus().name(),
-            p.getStartedAt()   != null ? p.getStartedAt().toString()   : null,
-            p.getCompletedAt() != null ? p.getCompletedAt().toString() : null,
-            p.getHrNote()
-        );
+        Optional<TestSession> sessionOpt =
+                testSessionRepository.findByCandidateIdAndAssessmentId(candidateId, assessment.getId());
+
+        int questionsCount;
+        if ("TECHNICAL".equals(testCategory)) {
+            int techCount = assessment.getThemes().stream()
+                    .mapToInt(th -> questionRepository.countByThemeId(th.getId()))
+                    .sum();
+            int psychoCount = assessment.getThemes().stream()
+                    .flatMap(th -> th.getThemeModels().stream())
+                    .mapToInt(tm -> tm.getQuestions().size())
+                    .sum();
+            questionsCount = techCount + psychoCount;
+        } else {
+            questionsCount = assessment.getThemes().stream()
+                    .flatMap(th -> th.getThemeModels().stream())
+                    .mapToInt(tm -> tm.getQuestions().size())
+                    .sum();
+        }
+
+        return CandidateApplicationResponse.JobTestInfo.builder()
+                .testId(assessment.getId())
+                .testName(assessment.getName())
+                .testDescription(assessment.getDescription())
+                .testStatus(assessment.getStatus().name())
+                .questionsCount(questionsCount)
+                .sessionStatus(sessionOpt.map(s -> s.getStatus().name()).orElse("PENDING"))
+                .score(sessionOpt.map(TestSession::getScore).orElse(null))
+                .startedAt(sessionOpt.map(TestSession::getStartedAt).orElse(null))
+                .completedAt(sessionOpt.map(TestSession::getCompletedAt).orElse(null))
+                .testCategory(testCategory)
+                .build();
+    }
+
+    private List<StageProgressDTO> loadStageProgress(String candidateId, String jobId) {
+        try {
+            List<ApplicationStageProgress> rows = stageProgressService.getProgress(candidateId, jobId);
+            return rows.stream()
+                    .map(p -> new StageProgressDTO(
+                            p.getId(),
+                            p.getStageOrder(),
+                            p.getStageName(),
+                            p.getStageType(),
+                            p.getStatus().name(),
+                            p.getStartedAt()   != null ? p.getStartedAt().toString()   : null,
+                            p.getCompletedAt() != null ? p.getCompletedAt().toString() : null,
+                            p.getHrNote()
+                    ))
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private String saveCvFile(String email, MultipartFile file) {
-        String originalName = file.getOriginalFilename() != null
-            ? file.getOriginalFilename() : "cv.pdf";
-        String ext = originalName.contains(".")
-            ? originalName.substring(originalName.lastIndexOf(".")).toLowerCase() : ".pdf";
-        if (!List.of(".pdf", ".doc", ".docx").contains(ext))
-            throw new RuntimeException("Unsupported format.");
-        if (file.getSize() > 5 * 1024 * 1024)
-            throw new RuntimeException("File too large (max 5 MB).");
-        try {
-            Path dir = Paths.get(uploadDir).toAbsolutePath();
-            Files.createDirectories(dir);
-            String safeEmail = email.replaceAll("[^a-zA-Z0-9._-]", "_");
-            String fileName  = safeEmail + ext;
-            Files.copy(file.getInputStream(), dir.resolve(fileName),
-                       StandardCopyOption.REPLACE_EXISTING);
-            return originalName + "|" + fileName;
-        } catch (IOException e) {
-            throw new RuntimeException("CV upload error: " + e.getMessage(), e);
-        }
-    }
 
     private Candidate findCandidate(String email) {
         return candidateRepository.findByEmail(email)
