@@ -26,6 +26,7 @@ import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
@@ -277,31 +278,51 @@ public class CandidateController {
 
     
     
-    @PostMapping("/matches/{jobId}/compute")
-    public ResponseEntity<?> computeMatch(
+    @GetMapping(value = "/matches/{jobId}/compute", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter computeMatch(
             @AuthenticationPrincipal UserDetails u,
             @PathVariable String jobId) {
-        try {
-            log.info("🎯 Compute match: {} ↔ {}", u.getUsername(), jobId);
-            var profile = candidateService.getProfile(u.getUsername());
-            if (profile.getCvPath() == null)
-                return ResponseEntity.badRequest().body(Map.of("error", "No CV uploaded"));
 
-            if (!matchingService.isAiAvailable())
-                return ResponseEntity.status(503).body(Map.of("error", "AI service unavailable. Please try again later."));
+        log.info("🎯 SSE compute match: {} ↔ {}", u.getUsername(), jobId);
+        SseEmitter emitter = new SseEmitter(300_000L);
+        emitter.onTimeout(emitter::complete);
+        emitter.onError(e -> emitter.complete());
 
-            // Lance Ollama en arrière-plan, répond immédiatement
-            matchingService.computeAsync(u.getUsername(), jobId);
-            
-            return ResponseEntity.ok(Map.of(
-                "status",  "computing",
-                "jobId",   jobId,
-                "message", "AI scoring started, please wait..."
-            ));
-        } catch (RuntimeException e) {
-            log.error("❌ Erreur compute: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        var profile = candidateService.getProfile(u.getUsername());
+        if (profile.getCvPath() == null) {
+            try {
+                emitter.send(SseEmitter.event().name("match-error")
+                    .data(Map.of("error", "No CV uploaded")));
+                emitter.complete();
+            } catch (Exception ignored) {}
+            return emitter;
         }
+
+        matchingService.computeAsync(u.getUsername(), jobId)
+            .whenComplete((result, ex) -> {
+                try {
+                    if (ex != null) {
+                        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                        emitter.send(SseEmitter.event().name("match-error")
+                            .data(Map.of("error", cause.getMessage())));
+                        emitter.completeWithError(ex);
+                    } else {
+                        emitter.send(SseEmitter.event().name("match-ready")
+                            .data(Map.of(
+                                "jobId",   jobId,
+                                "score",   result.getScoreGlobal(),
+                                "verdict", result.getVerdict(),
+                                "resume",  result.getResume()
+                            )));
+                        emitter.complete();
+                    }
+                } catch (Exception e) {
+                    log.warn("SSE send failed: {}", e.getMessage());
+                    emitter.completeWithError(e);
+                }
+            });
+
+        return emitter;
     }
 }
 

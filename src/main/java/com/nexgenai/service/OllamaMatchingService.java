@@ -8,7 +8,10 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import com.nexgenai.model.TechnicalSkill;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -267,6 +270,41 @@ public class OllamaMatchingService {
     
     
     
+    public MatchResult computeKeywordScore(String cvText, List<TechnicalSkill> skills) {
+        if (skills == null || skills.isEmpty()) {
+            MatchResult r = new MatchResult();
+            r.setScoreGlobal(0);
+            r.setVerdict("Score basique (IA indisponible)");
+            r.setResume("Aucune compétence définie pour ce poste. Démarrez Ollama pour une analyse complète.");
+            r.setDimensionsJson("{}");
+            r.setSkillsMatched("[]");
+            r.setSkillsMissing("[]");
+            return r;
+        }
+        String cv = cvText.toLowerCase();
+        int totalWeight = 0, matchedWeight = 0;
+        List<String> matched = new ArrayList<>(), missing = new ArrayList<>();
+        for (TechnicalSkill s : skills) {
+            int w = (s.getWeight() != null && s.getWeight() > 0) ? s.getWeight() : 10;
+            totalWeight += w;
+            if (cv.contains(s.getName().toLowerCase())) {
+                matchedWeight += w;
+                matched.add(s.getName());
+            } else {
+                missing.add(s.getName());
+            }
+        }
+        int score = totalWeight > 0 ? (matchedWeight * 100 / totalWeight) : 0;
+        MatchResult r = new MatchResult();
+        r.setScoreGlobal(score);
+        r.setVerdict("Score basique (IA indisponible)");
+        r.setResume("Correspondance de mots-clés. Démarrez Ollama pour une analyse IA complète.");
+        r.setDimensionsJson("{}");
+        r.setSkillsMatched(matched.isEmpty() ? "[]" : "[\"" + String.join("\",\"", matched) + "\"]");
+        r.setSkillsMissing(missing.isEmpty() ? "[]" : "[\"" + String.join("\",\"", missing) + "\"]");
+        return r;
+    }
+
     private MatchResult fallbackResult() {
         MatchResult r = new MatchResult();
         r.setScoreGlobal(0);
@@ -281,7 +319,13 @@ public class OllamaMatchingService {
     private int toInt(Object o) {
         if (o instanceof Integer i) return i;
         if (o instanceof Number  n) return n.intValue();
-        try { return Integer.parseInt(String.valueOf(o)); } catch (Exception e) { return 0; }
+        if (o instanceof String  s) {
+            s = s.trim();
+            if (s.contains("/")) s = s.split("/")[0].trim();   // "65/100" → "65"
+            if (s.endsWith("%")) s = s.substring(0, s.length() - 1).trim();  // "65%" → "65"
+            try { return Integer.parseInt(s); } catch (Exception e) { return 0; }
+        }
+        return 0;
     }
     private String str(Object o) { return o == null ? "" : String.valueOf(o); }
 

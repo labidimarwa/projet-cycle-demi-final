@@ -61,13 +61,21 @@ private final ExecutorService matchingExecutor = Executors.newFixedThreadPool(10
     }
 
     @Async("matchingExecutor")
-    public CompletableFuture<Void> computeAsync(String candidateEmail, String jobId) {
+    public CompletableFuture<OllamaMatchingService.MatchResult> computeAsync(String candidateEmail, String jobId) {
         try {
-            computeMatchForCandidateAndJob(candidateEmail, jobId);
+            JobMatch match = computeMatchForCandidateAndJob(candidateEmail, jobId);
+            OllamaMatchingService.MatchResult r = new OllamaMatchingService.MatchResult();
+            r.setScoreGlobal(match.getScore());
+            r.setVerdict(match.getVerdict());
+            r.setResume(match.getResume());
+            r.setDimensionsJson(match.getDimensionsJson());
+            r.setSkillsMatched(match.getSkillsMatched());
+            r.setSkillsMissing(match.getSkillsMissing());
+            return CompletableFuture.completedFuture(r);
         } catch (Exception e) {
             log.error("❌ Async compute failed: {}", e.getMessage());
+            return CompletableFuture.failedFuture(e);
         }
-        return CompletableFuture.completedFuture(null);
     }
 
 
@@ -81,9 +89,6 @@ private final ExecutorService matchingExecutor = Executors.newFixedThreadPool(10
         String cvText = extractCvText(candidate);
         if (cvText == null || cvText.isBlank())
             throw new RuntimeException("CV is empty or unreadable");
-
-        if (!ollamaService.isAvailable())
-            throw new RuntimeException("AI service unavailable");
 
         String cvHash = md5(cvText);
 
@@ -181,7 +186,13 @@ private final ExecutorService matchingExecutor = Executors.newFixedThreadPool(10
             // Construire le texte de l'offre manuellement ici
             String offerText = buildOfferText(jobWithSkills, jobWithPrereqs);
 
-            OllamaMatchingService.MatchResult result = ollamaService.analyze(cvText, offerText);
+            OllamaMatchingService.MatchResult result;
+            try {
+                result = ollamaService.analyze(cvText, offerText);
+            } catch (Exception e) {
+                log.warn("⚠️ Ollama indisponible, fallback scoring pour jobId={}", jobRef.getId());
+                result = ollamaService.computeKeywordScore(cvText, jobWithSkills.getTechnicalSkills());
+            }
 
             JobMatch match = jobMatchRepository
                 .findByCandidateIdAndJobId(candidate.getId(), jobRef.getId())

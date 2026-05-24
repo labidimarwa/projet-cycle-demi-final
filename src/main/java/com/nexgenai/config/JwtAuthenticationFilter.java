@@ -41,12 +41,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         final String requestURI = request.getRequestURI();
         final String clientIp  = getClientIp(request);
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            filterChain.doFilter(request, response);
-            return;
+        // For SSE endpoints: EventSource cannot send headers, token comes via ?token= query param
+        final String jwt;
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            jwt = authHeader.substring(7);
+        } else {
+            String queryToken = request.getParameter("token");
+            if (queryToken == null || queryToken.isBlank()) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+            jwt = queryToken;
         }
-
-        final String jwt = authHeader.substring(7);
         String userEmail = null;
 
         try {
