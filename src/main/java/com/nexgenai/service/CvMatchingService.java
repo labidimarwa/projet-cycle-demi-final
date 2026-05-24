@@ -179,11 +179,13 @@ public class CvMatchingService {
         }
 
         // ── 6. Score global ───────────────────────────────────────────────────
-        double scoreSkills        = calculerScoreSkills(resultatsSkills);
-        double scorePrerequisite  = calculerScorePrerequisites(resultatsPrereqs);
-        // 70 % skills pondérés + 30 % prérequis
+        double scoreSkills       = calculerScoreSkills(resultatsSkills);
+        double scorePrerequisite = calculerScorePrerequisites(resultatsPrereqs);
+        // Poids définis par le RH lors de la création du poste (défaut 70/30)
+        double wSkills  = (jobAvecSkills.getSkillsWeight()        != null ? jobAvecSkills.getSkillsWeight()        : 70) / 100.0;
+        double wPrereqs = (jobAvecSkills.getPrerequisitesWeight() != null ? jobAvecSkills.getPrerequisitesWeight() : 30) / 100.0;
         double scoreGlobal = forceRejet ? 0.0
-            : arrondir(scoreSkills * 0.70 + scorePrerequisite * 0.30);
+            : arrondir(scoreSkills * wSkills + scorePrerequisite * wPrereqs);
         String recommendation = determinerRecommandation(scoreGlobal, forceRejet);
 
         // ── 7. Analyse Mistral ────────────────────────────────────────────────

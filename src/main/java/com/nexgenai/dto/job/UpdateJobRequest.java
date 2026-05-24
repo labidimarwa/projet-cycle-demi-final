@@ -32,6 +32,9 @@ public class UpdateJobRequest {
     private Boolean   isRemote;
     private JobStatus status;
 
+    private Integer skillsWeight;
+    private Integer prerequisitesWeight;
+
     private List<PrerequisiteDTO>   prerequisites;
     private List<TechnicalSkillDTO> technicalSkills;
     private List<AssessmentDTO>     assessments;

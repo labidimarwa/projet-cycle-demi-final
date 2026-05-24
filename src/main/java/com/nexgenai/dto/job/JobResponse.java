@@ -32,6 +32,10 @@ public class JobResponse {
     private LocalDate closingDate;
     private Boolean   isRemote;
 
+    // ── MATCHING WEIGHTS ──────────────────────────────────────────────────────
+    private Integer skillsWeight        = 70;
+    private Integer prerequisitesWeight = 30;
+
     // ── COMPUTED ──────────────────────────────────────────────────────────────
     private Integer applicantsCount = 0;
     private Integer avgMatchScore   = 0;
@@ -67,6 +71,10 @@ public class JobResponse {
     public void setClosingDate(LocalDate c) { this.closingDate = c; }
     public Boolean getIsRemote() { return isRemote; }
     public void setIsRemote(Boolean r) { this.isRemote = r; }
+    public Integer getSkillsWeight() { return skillsWeight; }
+    public void setSkillsWeight(Integer w) { this.skillsWeight = w; }
+    public Integer getPrerequisitesWeight() { return prerequisitesWeight; }
+    public void setPrerequisitesWeight(Integer w) { this.prerequisitesWeight = w; }
     public Integer getApplicantsCount() { return applicantsCount; }
     public void setApplicantsCount(Integer a) { this.applicantsCount = a; }
     public Integer getAvgMatchScore() { return avgMatchScore; }

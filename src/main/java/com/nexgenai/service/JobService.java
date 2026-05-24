@@ -147,6 +147,8 @@ public class JobService {
         if (req.getClosingDate()     != null) job.setClosingDate(req.getClosingDate());
         if (req.getIsRemote()        != null) job.setIsRemote(req.getIsRemote());
         if (req.getStatus()          != null) job.setStatus(req.getStatus());
+        if (req.getSkillsWeight()       != null) job.setSkillsWeight(req.getSkillsWeight());
+        if (req.getPrerequisitesWeight() != null) job.setPrerequisitesWeight(req.getPrerequisitesWeight());
 
         // ── Prerequisites ─────────────────────────────────────────────────────
         if (req.getPrerequisites() != null) {
@@ -261,6 +263,8 @@ public class JobService {
         job.setOpenPositions(req.getOpenPositions() != null ? req.getOpenPositions() : 1);
         job.setClosingDate(req.getClosingDate());
         job.setIsRemote(req.getIsRemote() != null ? req.getIsRemote() : false);
+        job.setSkillsWeight(req.getSkillsWeight() != null ? req.getSkillsWeight() : 70);
+        job.setPrerequisitesWeight(req.getPrerequisitesWeight() != null ? req.getPrerequisitesWeight() : 30);
     }
 
     private JobResponse mapToResponse(Job job) {
@@ -277,6 +281,8 @@ public class JobService {
         r.setOpenPositions(job.getOpenPositions());
         r.setClosingDate(job.getClosingDate());
         r.setIsRemote(job.getIsRemote());
+        r.setSkillsWeight(job.getSkillsWeight() != null ? job.getSkillsWeight() : 70);
+        r.setPrerequisitesWeight(job.getPrerequisitesWeight() != null ? job.getPrerequisitesWeight() : 30);
         r.setApplicantsCount((int) applicationRepository.countByJobId(job.getId()));
 
         if (job.getPrerequisites() != null)
@@ -284,7 +290,7 @@ public class JobService {
                 JobResponse.PrerequisiteDTO d = new JobResponse.PrerequisiteDTO();
                 d.setId(p.getId()); d.setType(p.getType()); d.setValue(p.getValue());
                 d.setObligatory(p.getObligatory()); d.setIcon(p.getIcon());
-                d.setCustomType(p.getCustomType());
+                d.setCustomType(p.getCustomType()); d.setWeight(p.getWeight());
                 if (p.getOptions() != null && !p.getOptions().isEmpty())
                     d.setOptions(List.of(p.getOptions().split(",")));
                 return d;

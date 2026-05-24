@@ -41,6 +41,11 @@ public class CreateJobRequest {
 
     private Boolean   isRemote      = false;
 
+    /** Poids section Compétences dans le score global (0–100). Défaut 70. */
+    private Integer skillsWeight        = 70;
+    /** Poids section Prérequis dans le score global (0–100). Défaut 30. */
+    private Integer prerequisitesWeight = 30;
+
     private List<PrerequisiteDTO>   prerequisites;
     private List<TechnicalSkillDTO> technicalSkills;
     private List<AssessmentDTO>     assessments;

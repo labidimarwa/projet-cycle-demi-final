@@ -52,6 +52,14 @@ public class Job {
     @Column(name = "is_remote")
     private Boolean isRemote = false;
 
+    /** Poids de la section Compétences dans le score global (0–100, défaut 70). */
+    @Column(name = "skills_weight")
+    private Integer skillsWeight = 70;
+
+    /** Poids de la section Prérequis dans le score global (0–100, défaut 30). */
+    @Column(name = "prerequisites_weight")
+    private Integer prerequisitesWeight = 30;
+
     // ── TIMESTAMPS ────────────────────────────────────────────────────────────
 
     private LocalDateTime createdAt;
@@ -102,6 +110,8 @@ public class Job {
         if (status == null) status = JobStatus.DRAFT;
         if (openPositions == null) openPositions = 1;
         if (isRemote == null) isRemote = false;
+        if (skillsWeight == null) skillsWeight = 70;
+        if (prerequisitesWeight == null) prerequisitesWeight = 30;
     }
 
     @PreUpdate
