@@ -86,6 +86,7 @@ public class JobResponse {
         private String id, type, value, icon;
         private Boolean obligatory, customType;
         private List<String> options;
+        private Integer weight;
         public String getId() { return id; } public void setId(String id) { this.id = id; }
         public String getType() { return type; } public void setType(String t) { this.type = t; }
         public String getValue() { return value; } public void setValue(String v) { this.value = v; }
@@ -93,6 +94,7 @@ public class JobResponse {
         public String getIcon() { return icon; } public void setIcon(String i) { this.icon = i; }
         public Boolean getCustomType() { return customType; } public void setCustomType(Boolean c) { this.customType = c; }
         public List<String> getOptions() { return options; } public void setOptions(List<String> o) { this.options = o; }
+        public Integer getWeight() { return weight; } public void setWeight(Integer w) { this.weight = w; }
     }
 
     public static class TechnicalSkillDTO {
