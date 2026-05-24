@@ -38,7 +38,7 @@ public class UpdateJobRequest {
     private List<WorkflowStageDTO>  workflowStages;
 
     @Data
-    @JsonIgnoreProperties(ignoreUnknown = true)   // ← ignore "id" et tout champ inconnu
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class PrerequisiteDTO {
         private String       type;
         private String       value;
@@ -46,6 +46,7 @@ public class UpdateJobRequest {
         private String       icon;
         private Boolean      customType;
         private List<String> options;
+        private Integer      weight;
     }
 
     @Data

@@ -19,10 +19,12 @@ public class Prerequisite {
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
     
-    private String type;
-    private String value;
+    private String  type;
+    private String  value;
     private Boolean obligatory;
-    private String icon;
+    /** Poids dans le scoring (0–100). Défaut 100 si non renseigné par le RH. */
+    private Integer weight;
+    private String  icon;
     private Boolean customType;
     
     @Column(columnDefinition = "TEXT")

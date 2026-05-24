@@ -27,6 +27,9 @@ public class PrerequisiteMatchResult {
     /** true si le RH a marqué ce prérequis comme obligatoire. */
     private boolean obligatoire;
 
+    /** Poids du prérequis (0–100), défini par le RH lors de la création du poste. */
+    private int poids;
+
     /** Score de satisfaction du prérequis (0.0 – 1.0). */
     private double scoreMatch;
 

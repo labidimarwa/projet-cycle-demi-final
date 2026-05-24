@@ -55,6 +55,8 @@ public class CreateJobRequest {
         private String       type;
         private String       value;
         private Boolean      obligatory;
+        /** Poids dans le scoring global (0–100). Le RH le définit lors de la création. */
+        private Integer      weight;
         private String       icon;
         private Boolean      customType;
         private List<String> options;

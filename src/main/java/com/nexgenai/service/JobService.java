@@ -46,6 +46,7 @@ public class JobService {
                 prereq.setType(p.getType());
                 prereq.setValue(p.getValue());
                 prereq.setObligatory(p.getObligatory());
+                prereq.setWeight(p.getWeight() != null && p.getWeight() > 0 ? p.getWeight() : 100);
                 prereq.setIcon(p.getIcon());
                 prereq.setCustomType(p.getCustomType());
                 if (p.getOptions() != null)
@@ -155,6 +156,7 @@ public class JobService {
                 prereq.setType(p.getType());
                 prereq.setValue(p.getValue());
                 prereq.setObligatory(p.getObligatory());
+                prereq.setWeight(p.getWeight() != null && p.getWeight() > 0 ? p.getWeight() : 100);
                 prereq.setIcon(p.getIcon());
                 prereq.setCustomType(p.getCustomType());
                 if (p.getOptions() != null)

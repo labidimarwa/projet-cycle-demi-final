@@ -375,6 +375,7 @@ public class CvMatchingService {
             String  type        = p.getType() != null ? p.getType().toUpperCase() : "SKILL";
             String  valeur      = p.getValue() != null ? p.getValue() : "";
             boolean obligatoire = Boolean.TRUE.equals(p.getObligatory());
+            int     poids       = (p.getWeight() != null && p.getWeight() > 0) ? p.getWeight() : 100;
 
             double  score   = 0.0;
             String  detecte = "";
@@ -428,6 +429,7 @@ public class CvMatchingService {
                 .requis(valeur)
                 .detecte(detecte)
                 .obligatoire(obligatoire)
+                .poids(poids)
                 .scoreMatch(arrondir3(score))
                 .satisfait(score >= 0.40)
                 .build());
@@ -437,11 +439,14 @@ public class CvMatchingService {
     }
 
     private double calculerScorePrerequisites(List<PrerequisiteMatchResult> resultats) {
-        if (resultats.isEmpty()) return 100.0; // Pas de prérequis = pas de pénalité
-        return arrondir(
-            resultats.stream().mapToDouble(r -> r.getScoreMatch() * 100.0).sum()
-            / resultats.size()
-        );
+        if (resultats.isEmpty()) return 100.0;
+        double totalPondere = 0, totalPoids = 0;
+        for (PrerequisiteMatchResult r : resultats) {
+            int p = r.getPoids() > 0 ? r.getPoids() : 100;
+            totalPondere += r.getScoreMatch() * p;
+            totalPoids   += p;
+        }
+        return totalPoids > 0 ? arrondir(totalPondere / totalPoids * 100.0) : 0.0;
     }
 
     /** Parse "3 ans", "36 mois", "2 years" → nombre de mois. */
