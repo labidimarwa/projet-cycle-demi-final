@@ -29,8 +29,6 @@ import java.util.Optional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
@@ -43,7 +41,6 @@ public class MatchingService {
     private final OllamaMatchingService ollamaService;
 private final CandidateRepository candidateRepo;
 private final ObjectMapper mapper = new ObjectMapper();
-private final ExecutorService matchingExecutor = Executors.newFixedThreadPool(10);
 
     @Value("${app.cv.upload-dir:uploads/cv}")
     private String uploadDir;
