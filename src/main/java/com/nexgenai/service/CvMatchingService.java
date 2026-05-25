@@ -146,11 +146,55 @@ public class CvMatchingService {
                 ? embedResult.getEmbeddings() : Collections.emptyMap();
         }
 
+        // ── 2b. Normalisation ESCO (additive — no-op si service non enhanced) ──
+        // Normalise les noms bruts des compétences CV et du poste vers des URIs ESCO.
+        // Si Python tourne sur main.py (sans /normalize), retourne résultat vide
+        // sans exception et le matching continue avec cosinus seul.
+        List<String> cvSkillNames = extraction.getCompetences().stream()
+            .map(CvExtractionResult.CompetenceExtraite::getNom)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+
+        Map<String, String> cvSkillToEscoUri = Collections.emptyMap();
+        if (!cvSkillNames.isEmpty()) {
+            EscoNormalizationResult cvNorm = pythonClient.normaliserSkills(cvSkillNames);
+            if (cvNorm.getNormalized() != null) {
+                cvSkillToEscoUri = cvNorm.getNormalized().stream()
+                    .filter(n -> n.getEscoUri() != null)
+                    .collect(Collectors.toMap(
+                        EscoNormalizationResult.NormalizedSkill::getRaw,
+                        EscoNormalizationResult.NormalizedSkill::getEscoUri,
+                        (a, b) -> a
+                    ));
+            }
+        }
+
+        Map<String, EscoNormalizationResult.NormalizedSkill> jobSkillToEsco = Collections.emptyMap();
+        if (!nomsSkills.isEmpty()) {
+            EscoNormalizationResult jobNorm = pythonClient.normaliserSkills(nomsSkills);
+            if (jobNorm.getNormalized() != null) {
+                jobSkillToEsco = jobNorm.getNormalized().stream()
+                    .collect(Collectors.toMap(
+                        EscoNormalizationResult.NormalizedSkill::getRaw,
+                        n -> n,
+                        (a, b) -> a
+                    ));
+            }
+        }
+
+        int escoMatches = cvSkillToEscoUri.size();
+        if (escoMatches > 0) {
+            log.info("🏷️  ESCO : {} compétences CV normalisées, {} skills poste normalisés",
+                escoMatches, jobSkillToEsco.size());
+        }
+
         // ── 3. Scoring des compétences ────────────────────────────────────────
         List<SkillMatchResult> resultatsSkills = scorerCompetences(
             jobAvecSkills.getTechnicalSkills(),
             extraction.getCompetences(),
-            embeddingsPoste
+            embeddingsPoste,
+            cvSkillToEscoUri,
+            jobSkillToEsco
         );
 
         // ── 4a. Rejet forcé — skill obligatoire non satisfait (Contrainte 2) ──
@@ -283,46 +327,82 @@ public class CvMatchingService {
      * Contrainte 1 : poids vient du job (jamais codé en dur).
      * Contrainte 5 : seule la similarité cosinus est calculée ici.
      */
+    /**
+     * Pour chaque compétence requise, calcule le meilleur score de correspondance.
+     * Priorité : ESCO_MATCH (même URI) > cosinus JobBERTa > fallback mot-clé.
+     *
+     * @param cvSkillToEscoUri   URI ESCO de chaque compétence du CV (vide si ESCO indisponible)
+     * @param jobSkillToEsco     normalisation ESCO de chaque skill du poste (vide si ESCO indisponible)
+     */
     private List<SkillMatchResult> scorerCompetences(
             List<TechnicalSkill> skillsPoste,
             List<CvExtractionResult.CompetenceExtraite> competencesCv,
-            Map<String, List<Double>> embeddingsPoste) {
+            Map<String, List<Double>> embeddingsPoste,
+            Map<String, String> cvSkillToEscoUri,
+            Map<String, EscoNormalizationResult.NormalizedSkill> jobSkillToEsco) {
 
         List<SkillMatchResult> resultats = new ArrayList<>();
 
+        // Construire l'ensemble des URIs ESCO présents dans le CV (pour ESCO_MATCH O(1))
+        Set<String> cvEscoUris = new HashSet<>(cvSkillToEscoUri.values());
+
         for (TechnicalSkill skill : skillsPoste) {
-            String  nom        = skill.getName();
-            // Contrainte 1 : poids défini par le RH, fallback 10 si null
-            int     poids      = (skill.getWeight() != null && skill.getWeight() > 0)
-                                 ? skill.getWeight() : 10;
+            String  nom         = skill.getName();
+            int     poids       = (skill.getWeight() != null && skill.getWeight() > 0)
+                                  ? skill.getWeight() : 10;
             boolean obligatoire = Boolean.TRUE.equals(skill.getObligatory());
 
-            List<Double> embPoste = embeddingsPoste.get(nom);
+            List<Double> embPoste    = embeddingsPoste.get(nom);
+            double       maxSim      = 0.0;
+            String       meilleureComp = "";
+            String       matchType   = null;
+            String       escoUri     = null;
+            String       escoLabel   = null;
 
-            double maxSim       = 0.0;
-            String meilleureComp = "";
+            // ── ESCO_MATCH (Tier 0) : même URI ESCO CV ↔ poste ──────────────
+            EscoNormalizationResult.NormalizedSkill jobEsco = jobSkillToEsco.get(nom);
+            if (jobEsco != null && jobEsco.getEscoUri() != null
+                    && cvEscoUris.contains(jobEsco.getEscoUri())) {
+                // Synonyme détecté via ontologie (ex: "JS" CV ↔ "JavaScript" poste)
+                matchType     = "ESCO_MATCH";
+                maxSim        = 1.0;
+                escoUri       = jobEsco.getEscoUri();
+                escoLabel     = jobEsco.getPreferredLabel();
+                // Retrouver la compétence CV qui a le même URI
+                meilleureComp = cvSkillToEscoUri.entrySet().stream()
+                    .filter(e -> e.getValue().equals(jobEsco.getEscoUri()))
+                    .map(Map.Entry::getKey)
+                    .findFirst().orElse(nom);
+            }
 
-            if (embPoste != null && !competencesCv.isEmpty()) {
-                // Calcul cosinus entre l'embedding du skill requis et chaque compétence du CV
-                for (CvExtractionResult.CompetenceExtraite comp : competencesCv) {
-                    if (comp.getEmbedding() != null && !comp.getEmbedding().isEmpty()) {
-                        double sim = cosinus(embPoste, comp.getEmbedding());
-                        if (sim > maxSim) {
-                            maxSim = sim;
-                            meilleureComp = comp.getNom();
+            // ── Cosinus JobBERTa (Tier 1) si pas d'ESCO_MATCH ────────────────
+            if (matchType == null) {
+                if (jobEsco != null) {
+                    escoUri   = jobEsco.getEscoUri();
+                    escoLabel = jobEsco.getPreferredLabel();
+                }
+                if (embPoste != null && !competencesCv.isEmpty()) {
+                    for (CvExtractionResult.CompetenceExtraite comp : competencesCv) {
+                        if (comp.getEmbedding() != null && !comp.getEmbedding().isEmpty()) {
+                            double sim = cosinus(embPoste, comp.getEmbedding());
+                            if (sim > maxSim) {
+                                maxSim = sim;
+                                meilleureComp = comp.getNom();
+                            }
                         }
                     }
+                } else {
+                    // Fallback mot-clé si embeddings indisponibles
+                    boolean kw = competencesCv.stream().anyMatch(c ->
+                        c.getNom() != null && (
+                            c.getNom().toLowerCase().contains(nom.toLowerCase()) ||
+                            nom.toLowerCase().contains(c.getNom().toLowerCase())
+                        )
+                    );
+                    maxSim        = kw ? 0.80 : 0.0;
+                    meilleureComp = kw ? nom  : "";
                 }
-            } else {
-                // Fallback mot-clé si embeddings indisponibles
-                boolean kw = competencesCv.stream().anyMatch(c ->
-                    c.getNom() != null && (
-                        c.getNom().toLowerCase().contains(nom.toLowerCase()) ||
-                        nom.toLowerCase().contains(c.getNom().toLowerCase())
-                    )
-                );
-                maxSim       = kw ? 0.80 : 0.0;
-                meilleureComp = kw ? nom : "";
+                matchType = statut(maxSim);
             }
 
             resultats.add(SkillMatchResult.builder()
@@ -331,6 +411,9 @@ public class CvMatchingService {
                 .obligatoire(obligatoire)
                 .similarite(arrondir3(maxSim))
                 .statut(statut(maxSim))
+                .matchType(matchType)
+                .escoUri(escoUri)
+                .escoPreferredLabel(escoLabel)
                 .competenceTrouvee(meilleureComp)
                 .build());
         }
@@ -347,14 +430,19 @@ public class CvMatchingService {
     /**
      * Score pondéré des compétences.
      * Contrainte 1 : utilise les poids définis par le RH.
+     * ESCO_MATCH est prioritaire sur le statut cosinus (score 100%).
+     * Null-safe sur matchType pour les anciens rapports BDD (fallback sur statut).
      */
     private double calculerScoreSkills(List<SkillMatchResult> resultats) {
         double poids = 0, total = 0;
         for (SkillMatchResult r : resultats) {
-            double contribution = switch (r.getStatut()) {
-                case "MATCHED"  -> 100.0;
-                case "PARTIAL"  -> 50.0;
-                default         -> 0.0;
+            String type = r.getMatchType() != null ? r.getMatchType() : r.getStatut();
+            double contribution = switch (type) {
+                case "ESCO_MATCH"    -> 100.0;
+                case "BROADER_MATCH" -> 60.0;
+                case "MATCHED"       -> 100.0;
+                case "PARTIAL"       -> 50.0;
+                default              -> 0.0;
             };
             total += contribution * r.getPoids();
             poids += r.getPoids();
@@ -488,16 +576,42 @@ public class CvMatchingService {
             List<SkillMatchResult> skills,
             List<PrerequisiteMatchResult> prereqs) {
 
-        // Construction d'un résumé structuré pour Mistral
+        // Construction d'un résumé structuré pour Mistral (enrichi ESCO)
         StringBuilder offerText = new StringBuilder();
         offerText.append("Poste : ").append(job.getTitle()).append("\n");
-        offerText.append("Compétences trouvées : ");
-        skills.stream().filter(s -> "MATCHED".equals(s.getStatut()))
-            .forEach(s -> offerText.append(s.getNom()).append(", "));
+
+        // Compétences validées (ESCO_MATCH + MATCHED + PARTIAL)
+        offerText.append("Compétences validées : ");
+        skills.stream()
+            .filter(s -> "ESCO_MATCH".equals(s.getMatchType())
+                      || "MATCHED".equals(s.getStatut())
+                      || "PARTIAL".equals(s.getStatut()))
+            .forEach(s -> {
+                offerText.append(s.getNom());
+                // Ajouter le label ESCO canonique si différent du nom brut
+                if (s.getEscoPreferredLabel() != null
+                        && !s.getEscoPreferredLabel().equalsIgnoreCase(s.getNom())) {
+                    offerText.append(" [=").append(s.getEscoPreferredLabel()).append("]");
+                }
+                if ("ESCO_MATCH".equals(s.getMatchType())) offerText.append("✓");
+                offerText.append(", ");
+            });
+
+        // Compétences manquantes avec label ESCO pour que Mistral raisonne avec le bon terme
         offerText.append("\nCompétences manquantes : ");
-        skills.stream().filter(s -> "MISSING".equals(s.getStatut()))
-            .forEach(s -> offerText.append(s.getNom()).append(", "));
-        offerText.append("\nDemande une analyse courte des points forts et lacunes.");
+        skills.stream()
+            .filter(s -> "MISSING".equals(s.getStatut()))
+            .forEach(s -> {
+                offerText.append(s.getNom());
+                if (s.getEscoPreferredLabel() != null
+                        && !s.getEscoPreferredLabel().equalsIgnoreCase(s.getNom())) {
+                    offerText.append(" [ESCO: ").append(s.getEscoPreferredLabel()).append("]");
+                }
+                if (s.isObligatoire()) offerText.append(" (OBLIGATOIRE)");
+                offerText.append(", ");
+            });
+
+        offerText.append("\nDemande une analyse courte des points forts et lacunes en français.");
 
         String cvResume = texteCv != null
             ? texteCv.substring(0, Math.min(texteCv.length(), 1200))

@@ -35,4 +35,23 @@ public class SkillMatchResult {
 
     /** Compétence du CV la plus proche sémantiquement. */
     private String competenceTrouvee;
+
+    // ─── Champs ESCO (null si ESCO non chargé — rétrocompat rapports existants) ──
+
+    /** URI canonique ESCO du skill requis (null si non normalisé). */
+    private String escoUri;
+
+    /** Label préféré ESCO canonique (ex : "JavaScript" pour "JS"). */
+    private String escoPreferredLabel;
+
+    /**
+     * Type de correspondance enrichie :
+     * ESCO_MATCH    — même URI ESCO côté CV et côté offre (synonyme détecté) → 100 %
+     * BROADER_MATCH — compétence CV est un concept parent de la compétence requise → 60 %
+     * MATCHED       — cosinus ≥ 0.75 → 100 %
+     * PARTIAL       — cosinus ≥ 0.50 → 50 %
+     * MISSING       — cosinus < 0.50 → 0 %
+     * Null pour les anciens rapports désérialisés (fallback sur {@link #statut}).
+     */
+    private String matchType;
 }
