@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.service.CodeExecutionService;
 import com.nexgenai.service.EmailService;
-import com.nexgenai.service.MatchingService;
 import com.nexgenai.service.OllamaMatchingService;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,7 +57,6 @@ class FullAuthFlowTest {
     }
 
     @MockBean private EmailService          emailService;
-    @MockBean private MatchingService       matchingService;
     @MockBean private OllamaMatchingService ollamaMatchingService;
     @MockBean private CodeExecutionService  codeExecutionService;
 

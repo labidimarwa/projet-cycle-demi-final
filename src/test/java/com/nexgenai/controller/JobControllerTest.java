@@ -5,7 +5,6 @@ import com.nexgenai.model.enums.ContractType;
 import com.nexgenai.model.enums.ExperienceLevel;
 import com.nexgenai.service.CodeExecutionService;
 import com.nexgenai.service.EmailService;
-import com.nexgenai.service.MatchingService;
 import com.nexgenai.service.OllamaMatchingService;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,7 +58,6 @@ class JobControllerTest {
     }
 
     @MockBean private EmailService          emailService;
-    @MockBean private MatchingService       matchingService;
     @MockBean private OllamaMatchingService ollamaMatchingService;
     @MockBean private CodeExecutionService  codeExecutionService;
 

@@ -15,7 +15,7 @@ import com.nexgenai.service.ApplicationService;
 import com.nexgenai.service.ApplicationStageProgressService;
 import com.nexgenai.service.CandidateService;
 import com.nexgenai.service.ChatbotService;
-import com.nexgenai.service.MatchingService;
+import com.nexgenai.service.CvMatchingService;
 import com.nexgenai.service.TestSessionService;
 
 import jakarta.validation.Valid;
@@ -34,6 +34,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -52,7 +53,7 @@ public class CandidateController {
     private final ApplicationService              applicationService;
     private final ChatbotService                  chatbotService;
     private final ApplicationStageProgressService stageProgressService;
-    private final MatchingService                 matchingService;
+    private final CvMatchingService               cvMatchingService;
     private final TestSessionService              testSessionService;
     private final AntiCheatService                antiCheatService;
 
@@ -298,7 +299,8 @@ public class CandidateController {
             return emitter;
         }
 
-        matchingService.computeAsync(u.getUsername(), jobId)
+        String candidateId = profile.getId();
+        CompletableFuture.supplyAsync(() -> cvMatchingService.lancerMatching(jobId, candidateId, null, null))
             .whenComplete((result, ex) -> {
                 try {
                     if (ex != null) {
@@ -311,8 +313,8 @@ public class CandidateController {
                             .data(Map.of(
                                 "jobId",   jobId,
                                 "score",   result.getScoreGlobal(),
-                                "verdict", result.getVerdict(),
-                                "resume",  result.getResume()
+                                "verdict", result.getRecommendation(),
+                                "resume",  result.getAnalyseTexte() != null ? result.getAnalyseTexte() : ""
                             )));
                         emitter.complete();
                     }

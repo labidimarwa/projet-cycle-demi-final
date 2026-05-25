@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * Handles candidate applications.
  * On submit: saves Application, triggers async matching, and SEEDS process stages.
@@ -21,7 +23,7 @@ public class ApplicationService {
 
     private final ApplicationRepository           applicationRepository;
     private final UserRepository                  userRepository;
-    private final MatchingService                 matchingService;
+    private final CvMatchingService               cvMatchingService;
     private final ApplicationStageProgressService stageProgressService;
     private final FileStorageService              fileStorageService;
 
@@ -58,8 +60,16 @@ public class ApplicationService {
         stageProgressService.seedFromWorkflowStages(candidate.getId(), jobId);
         log.info("📋 Stage progress seeded: candidate {} → job {}", candidate.getId(), jobId);
 
-        // ── Trigger async AI matching ─────────────────────────────────────────
-        matchingService.computeMatchForCandidateAndJob(candidateEmail, jobId);
+        // ── Trigger async AI matching (Python + JobBERTa) ────────────────────
+        String candidateId = candidate.getId();
+        CompletableFuture.runAsync(() -> {
+            try {
+                cvMatchingService.lancerMatching(jobId, candidateId, null, null);
+                log.info("✅ Matching IA terminé : {} → job {}", candidateEmail, jobId);
+            } catch (Exception e) {
+                log.warn("⚠️ Matching IA échoué (retentable via SSE) : {}", e.getMessage());
+            }
+        });
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

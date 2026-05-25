@@ -28,7 +28,6 @@ public class CandidateService {
     private final JobMatchRepository                  jobMatchRepository;
     private final ApplicationRepository               applicationRepository;
     private final ApplicationStageProgressRepository  stageProgressRepository;
-    private final MatchingService                     matchingService;
     private final FileStorageService                  fileStorageService;
     private final ChatSessionRepository               chatSessionRepository;
     private final AssessmentRepository                assessmentRepository;
@@ -237,15 +236,5 @@ public class CandidateService {
     private Candidate findCandidate(String email) {
         return candidateRepository.findByEmail(email)
             .orElseThrow(() -> new RuntimeException("Candidate not found: " + email));
-    }
-    
-    
-    @Transactional
-    public JobMatch computeSingleMatch(String email, String jobId) {
-        Candidate c = findCandidate(email);
-        if (c.getCvPath() == null)
-            throw new RuntimeException("No CV uploaded");
-        // Déclenche le calcul pour un seul job et retourne le résultat
-        return matchingService.computeMatchForCandidateAndJob(email, jobId);
     }
 }
