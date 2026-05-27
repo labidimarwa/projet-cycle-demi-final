@@ -33,8 +33,10 @@ public class JobResponse {
     private Boolean   isRemote;
 
     // ── MATCHING WEIGHTS ──────────────────────────────────────────────────────
-    private Integer skillsWeight        = 70;
-    private Integer prerequisitesWeight = 30;
+    private Integer skillsWeight         = 70;
+    private Integer prerequisitesWeight  = 30;
+    private Integer technicalSkillWeight = 60;
+    private Integer softSkillWeight      = 40;
 
     // ── COMPUTED ──────────────────────────────────────────────────────────────
     private Integer applicantsCount = 0;
@@ -75,6 +77,10 @@ public class JobResponse {
     public void setSkillsWeight(Integer w) { this.skillsWeight = w; }
     public Integer getPrerequisitesWeight() { return prerequisitesWeight; }
     public void setPrerequisitesWeight(Integer w) { this.prerequisitesWeight = w; }
+    public Integer getTechnicalSkillWeight() { return technicalSkillWeight; }
+    public void setTechnicalSkillWeight(Integer w) { this.technicalSkillWeight = w; }
+    public Integer getSoftSkillWeight() { return softSkillWeight; }
+    public void setSoftSkillWeight(Integer w) { this.softSkillWeight = w; }
     public Integer getApplicantsCount() { return applicantsCount; }
     public void setApplicantsCount(Integer a) { this.applicantsCount = a; }
     public Integer getAvgMatchScore() { return avgMatchScore; }
@@ -106,13 +112,14 @@ public class JobResponse {
     }
 
     public static class TechnicalSkillDTO {
-        private String id, name;
+        private String id, name, skillType;
         private Integer weight;
         private Boolean obligatory;
         public String getId() { return id; } public void setId(String id) { this.id = id; }
         public String getName() { return name; } public void setName(String n) { this.name = n; }
         public Boolean getObligatory() { return obligatory; } public void setObligatory(Boolean o) { this.obligatory = o; }
         public Integer getWeight() { return weight; } public void setWeight(Integer w) { this.weight = w; }
+        public String getSkillType() { return skillType; } public void setSkillType(String t) { this.skillType = t; }
     }
     @Data
 

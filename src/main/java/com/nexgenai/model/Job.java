@@ -60,6 +60,14 @@ public class Job {
     @Column(name = "prerequisites_weight")
     private Integer prerequisitesWeight = 30;
 
+    /** Poids des compétences techniques dans la section Skills (défaut 60). */
+    @Column(name = "technical_skill_weight")
+    private Integer technicalSkillWeight = 60;
+
+    /** Poids des compétences soft dans la section Skills (défaut 40). */
+    @Column(name = "soft_skill_weight")
+    private Integer softSkillWeight = 40;
+
     // ── TIMESTAMPS ────────────────────────────────────────────────────────────
 
     private LocalDateTime createdAt;
@@ -112,6 +120,8 @@ public class Job {
         if (isRemote == null) isRemote = false;
         if (skillsWeight == null) skillsWeight = 70;
         if (prerequisitesWeight == null) prerequisitesWeight = 30;
+        if (technicalSkillWeight == null) technicalSkillWeight = 60;
+        if (softSkillWeight == null) softSkillWeight = 40;
     }
 
     @PreUpdate

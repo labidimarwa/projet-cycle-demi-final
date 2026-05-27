@@ -26,7 +26,7 @@ public class MatchingReportDTO {
     /** RETENIR (≥75) | A_ETUDIER (≥50) | REJETER (<50 ou rejet forcé). */
     private String recommendation;
 
-    /** true si un skill/prérequis obligatoire n'est pas satisfait → rejet forcé. */
+    /** true si un skill/prérequis obligatoire n'est pas satisfait → score = 0. */
     private boolean forceRejet;
 
     /** Explication du rejet forcé (ex : "Compétence obligatoire manquante : Java"). */
@@ -34,18 +34,21 @@ public class MatchingReportDTO {
 
     // ─── Détail compétences ───────────────────────────────────────────────────
     private List<SkillMatchResult> skills;
-    /** Score pondéré des skills uniquement (70 % du score global). */
+
+    /** Score pondéré de l'ensemble des skills (section skills du global). */
     private double scoreSkills;
+
+    /** Score pondéré des compétences techniques uniquement. */
+    private double scoreSkillsTechnique;
+
+    /** Score pondéré des soft skills uniquement. */
+    private double scoreSkillsSoft;
 
     // ─── Détail prérequis ─────────────────────────────────────────────────────
     private List<PrerequisiteMatchResult> prerequis;
-    /** Score moyen des prérequis (30 % du score global). */
-    private double scorePrerequisite;
 
-    // ─── Analyse Mistral ─────────────────────────────────────────────────────
-    private List<String> pointsForts;
-    private List<String> pointsFaibles;
-    private String analyseTexte;
+    /** Score moyen des prérequis. */
+    private double scorePrerequisite;
 
     private LocalDateTime computedAt;
 }

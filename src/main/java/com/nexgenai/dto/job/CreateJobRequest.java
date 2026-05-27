@@ -45,6 +45,10 @@ public class CreateJobRequest {
     private Integer skillsWeight        = 70;
     /** Poids section Prérequis dans le score global (0–100). Défaut 30. */
     private Integer prerequisitesWeight = 30;
+    /** Poids sous-section compétences techniques (défaut 60). */
+    private Integer technicalSkillWeight = 60;
+    /** Poids sous-section compétences soft (défaut 40). */
+    private Integer softSkillWeight      = 40;
 
     private List<PrerequisiteDTO>   prerequisites;
     private List<TechnicalSkillDTO> technicalSkills;
@@ -75,6 +79,8 @@ public class CreateJobRequest {
         private Integer minLevel;
         private Boolean obligatory;
         private Integer weight;
+        /** "TECHNICAL" or "SOFT" — sent by Angular form. Défaut TECHNICAL. */
+        private String  skillType = "TECHNICAL";
     }
 
     @Data @NoArgsConstructor @AllArgsConstructor

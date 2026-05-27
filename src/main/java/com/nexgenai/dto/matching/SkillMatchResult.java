@@ -54,4 +54,7 @@ public class SkillMatchResult {
      * Null pour les anciens rapports désérialisés (fallback sur {@link #statut}).
      */
     private String matchType;
+
+    /** "TECHNICAL" or "SOFT" — issu du champ skillType du poste. */
+    private String skillType;
 }

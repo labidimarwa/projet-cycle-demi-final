@@ -41,6 +41,7 @@ public class SecurityConfig {
 
             // Activer CORS géré par Spring Security
             .cors(Customizer.withDefaults())
+            .securityContext(context -> context.requireExplicitSave(false))
 
             // Gestion des exceptions (401 / 403)
             .exceptionHandling(exception -> exception
@@ -50,6 +51,7 @@ public class SecurityConfig {
 
             // Stateless (JWT)
             .sessionManagement(session -> session
+
                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
 
@@ -79,7 +81,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.PATCH, "/job-tests/**").hasAnyRole("HR", "ADMIN")
 
                 // Candidate portal — authenticated candidates only
-                .requestMatchers("/candidate/**").hasRole("CANDIDATE")
+                //.requestMatchers("/candidate/**").hasRole("CANDIDATE")
+                .requestMatchers("/api/v1/candidate/matches/*/compute").hasRole("CANDIDATE")
+                .requestMatchers("/api/v1/candidate/**").hasRole("CANDIDATE")
+
                 .requestMatchers(HttpMethod.GET, "/api/v1/candidate/applications/*/stages").hasRole("CANDIDATE")
 
                 // Interviews — HR/ADMIN manage, evaluators read

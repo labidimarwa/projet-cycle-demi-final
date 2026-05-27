@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.service.CodeExecutionService;
 import com.nexgenai.service.EmailService;
-import com.nexgenai.service.OllamaMatchingService;
+
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -56,9 +56,8 @@ class FullAuthFlowTest {
             .build();
     }
 
-    @MockBean private EmailService          emailService;
-    @MockBean private OllamaMatchingService ollamaMatchingService;
-    @MockBean private CodeExecutionService  codeExecutionService;
+    @MockBean private EmailService         emailService;
+    @MockBean private CodeExecutionService codeExecutionService;
 
     private static final String AUTH_BASE = "/auth";
     private static final String JOBS_BASE = "/jobs";

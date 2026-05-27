@@ -24,6 +24,10 @@ public class TechnicalSkill {
     private String name;
     private Boolean obligatory;
     private Integer weight;
+
+    /** "TECHNICAL" or "SOFT" — default TECHNICAL for backward compat. */
+    @Column(name = "skill_type")
+    private String skillType = "TECHNICAL";
     
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "job_id")

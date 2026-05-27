@@ -61,6 +61,7 @@ public class JobService {
                 skill.setName(s.getName());
                 skill.setObligatory(s.getObligatory());
                 skill.setWeight(s.getWeight());
+                skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
                 job.addTechnicalSkill(skill);
             });
         }
@@ -147,8 +148,10 @@ public class JobService {
         if (req.getClosingDate()     != null) job.setClosingDate(req.getClosingDate());
         if (req.getIsRemote()        != null) job.setIsRemote(req.getIsRemote());
         if (req.getStatus()          != null) job.setStatus(req.getStatus());
-        if (req.getSkillsWeight()       != null) job.setSkillsWeight(req.getSkillsWeight());
-        if (req.getPrerequisitesWeight() != null) job.setPrerequisitesWeight(req.getPrerequisitesWeight());
+        if (req.getSkillsWeight()          != null) job.setSkillsWeight(req.getSkillsWeight());
+        if (req.getPrerequisitesWeight()   != null) job.setPrerequisitesWeight(req.getPrerequisitesWeight());
+        if (req.getTechnicalSkillWeight()  != null) job.setTechnicalSkillWeight(req.getTechnicalSkillWeight());
+        if (req.getSoftSkillWeight()       != null) job.setSoftSkillWeight(req.getSoftSkillWeight());
 
         // ── Prerequisites ─────────────────────────────────────────────────────
         if (req.getPrerequisites() != null) {
@@ -175,6 +178,7 @@ public class JobService {
                 skill.setName(s.getName());
                 skill.setObligatory(s.getObligatory());
                 skill.setWeight(s.getWeight());
+                skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
                 job.addTechnicalSkill(skill);
             });
         }
@@ -265,6 +269,8 @@ public class JobService {
         job.setIsRemote(req.getIsRemote() != null ? req.getIsRemote() : false);
         job.setSkillsWeight(req.getSkillsWeight() != null ? req.getSkillsWeight() : 70);
         job.setPrerequisitesWeight(req.getPrerequisitesWeight() != null ? req.getPrerequisitesWeight() : 30);
+        job.setTechnicalSkillWeight(req.getTechnicalSkillWeight() != null ? req.getTechnicalSkillWeight() : 60);
+        job.setSoftSkillWeight(req.getSoftSkillWeight() != null ? req.getSoftSkillWeight() : 40);
     }
 
     private JobResponse mapToResponse(Job job) {
@@ -283,6 +289,8 @@ public class JobService {
         r.setIsRemote(job.getIsRemote());
         r.setSkillsWeight(job.getSkillsWeight() != null ? job.getSkillsWeight() : 70);
         r.setPrerequisitesWeight(job.getPrerequisitesWeight() != null ? job.getPrerequisitesWeight() : 30);
+        r.setTechnicalSkillWeight(job.getTechnicalSkillWeight() != null ? job.getTechnicalSkillWeight() : 60);
+        r.setSoftSkillWeight(job.getSoftSkillWeight() != null ? job.getSoftSkillWeight() : 40);
         r.setApplicantsCount((int) applicationRepository.countByJobId(job.getId()));
 
         if (job.getPrerequisites() != null)
@@ -301,6 +309,7 @@ public class JobService {
                 JobResponse.TechnicalSkillDTO d = new JobResponse.TechnicalSkillDTO();
                 d.setId(s.getId()); d.setName(s.getName());
                 d.setObligatory(s.getObligatory()); d.setWeight(s.getWeight());
+                d.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
                 return d;
             }).collect(Collectors.toList()));
 
