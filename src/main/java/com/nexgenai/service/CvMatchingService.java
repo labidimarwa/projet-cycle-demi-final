@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.dto.matching.*;
 import com.nexgenai.model.*;
 import com.nexgenai.repository.CandidateRepository;
+import com.nexgenai.repository.JobMatchRepository;
 import com.nexgenai.repository.JobRepository;
 import com.nexgenai.repository.MatchingReportRepository;
 import lombok.RequiredArgsConstructor;
@@ -26,17 +27,16 @@ import java.util.stream.Collectors;
  * Orchestrateur du matching CV ↔ Offre (nouvelle architecture Python + Java).
  *
  * Workflow :
- *  1. Appel Python /extract → embeddings CV (JobBERTa)
- *  2. Appel Python /embed   → embeddings skills du poste (JobBERTa)
- *  3. Similarité cosinus pour chaque skill requis
- *  4. Application règles de rejet forcé (obligatory + seuils)
+ *  1. Appel Python /extract (job-aware Qwen) → compétences + embeddings multilingues
+ *  2. Appel Python /embed   → embeddings skills du poste (multilingue FR+EN)
+ *  3. Similarité cosinus multilingue pour chaque skill requis
+ *  4. Application règles de rejet forcé — score = 0 si obligatoire manquant
  *  5. Score global pondéré (weights viennent du job créé par le RH)
- *  6. Analyse Mistral (points forts / faibles)
- *  7. Sauvegarde BDD (upsert par jobId + candidateId)
+ *  6. Sauvegarde BDD (upsert par jobId + candidateId)
  *
  * Contrainte 1 : les weights viennent TOUJOURS du job — jamais codés en dur.
- * Contrainte 2 : skill obligatoire + similarité < 0.50 → REJETER forcé.
- * Contrainte 3 : prérequis obligatoire + match < 0.40 → REJETER forcé.
+ * Contrainte 2 : skill obligatoire + similarité < 0.50 → score = 0 (rejet forcé).
+ * Contrainte 3 : prérequis obligatoire + match < 0.40 → score = 0 (rejet forcé).
  * Contrainte 4 : Python indisponible → RuntimeException message clair.
  * Contrainte 5 : seule la similarité cosinus est calculée ici (Java).
  */
@@ -45,12 +45,12 @@ import java.util.stream.Collectors;
 @Slf4j
 public class CvMatchingService {
 
-    private final PythonExtractorClient   pythonClient;
-    private final OllamaMatchingService   ollamaService;   // Mistral (existant)
-    private final JobRepository           jobRepository;
+    private final PythonExtractorClient    pythonClient;
+    private final JobRepository            jobRepository;
     private final MatchingReportRepository reportRepository;
-    private final CandidateRepository     candidateRepository;
-    private final ObjectMapper            objectMapper;
+    private final JobMatchRepository       jobMatchRepository;
+    private final CandidateRepository      candidateRepository;
+    private final ObjectMapper             objectMapper;
 
     @Value("${app.cv.upload-dir:uploads/cv}")
     private String uploadDir;
@@ -111,26 +111,44 @@ public class CvMatchingService {
             throw new RuntimeException("Aucun CV disponible pour ce candidat.");
         }
 
+        // ── Cache : même CV + même poste → rapport existant (avant appel Python) ──
+        String cvHash = md5(cvBytes);
         // ── Chargement du poste (deux requêtes pour éviter MultipleBagFetchException) ──
         Job jobAvecSkills = jobRepository.findByIdWithSkills(jobId)
             .orElseThrow(() -> new RuntimeException("Poste introuvable : " + jobId));
         Job jobAvecPrereqs = jobRepository.findByIdWithPrerequisites(jobId)
             .orElseThrow(() -> new RuntimeException("Poste introuvable : " + jobId));
 
-        log.info("🎯 Matching : {} ↔ {}", candidat.getEmail(), jobAvecSkills.getTitle());
-
-        // ── 1. Extraction CV via Python ────────────────────────────────────────
-        CvExtractionResult extraction = pythonClient.extraireCv(cvBytes, cvFilename);
-        log.info("📄 {} compétences extraites du CV", extraction.getCompetences().size());
-
-        // ── Cache : même CV + même poste → rapport existant ──────────────────
-        String cvHash = md5(cvBytes);
         Optional<MatchingReport> cached = reportRepository
             .findByJobIdAndCandidateIdAndCvHash(jobId, candidateId, cvHash);
         if (cached.isPresent()) {
-            log.info("⚡ Rapport en cache retourné (CV inchangé)");
-            return deserialiserRapport(cached.get(), jobAvecSkills, candidat);
+            log.info("⚡ Rapport en cache retourné (CV inchangé) — Python non appelé");
+            MatchingReport r = cached.get();
+            // Ensure job_matches stays in sync (may be empty on first run after migration)
+            if (!jobMatchRepository.existsByCandidateIdAndJobIdAndCvHash(candidateId, jobId, cvHash)) {
+                JobMatch jm = jobMatchRepository
+                    .findByCandidateIdAndJobId(candidateId, jobId)
+                    .orElse(JobMatch.builder().candidateId(candidateId).jobId(jobId).build());
+                jm.setScore((int) Math.round(r.getScoreGlobal()));
+                jm.setVerdict(r.getRecommendation());
+                jm.setCvHash(cvHash);
+                jm.setComputedAt(r.getComputedAt());
+                jobMatchRepository.save(jm);
+            }
+            return deserialiserRapport(r, jobAvecSkills, candidat);
         }
+
+        log.info("🎯 Matching : {} ↔ {}", candidat.getEmail(), jobAvecSkills.getTitle());
+
+        // ── 1. Extraction CV via Python (job-aware Qwen + embeddings multilingues) ──
+        CvExtractionResult extraction = pythonClient.extraireCv(
+            cvBytes, cvFilename, jobAvecPrereqs.getPrerequisites()
+        );
+        int nbComp = extraction.getCompetences() != null ? extraction.getCompetences().size() : 0;
+        log.info("📄 {} compétences extraites du CV (hard={}, soft={})",
+            nbComp,
+            extraction.getHardSkills() != null ? extraction.getHardSkills().size() : 0,
+            extraction.getSoftSkills() != null ? extraction.getSoftSkills().size() : 0);
 
         // ── 2. Embeddings des skills du poste via Python ──────────────────────
         // Contrainte 1 : les skills viennent du job créé par le RH
@@ -223,7 +241,31 @@ public class CvMatchingService {
         }
 
         // ── 6. Score global ───────────────────────────────────────────────────
-        double scoreSkills       = calculerScoreSkills(resultatsSkills);
+        // Partition skills by type for weighted sub-scores
+        List<SkillMatchResult> techResults = resultatsSkills.stream()
+            .filter(r -> !"SOFT".equalsIgnoreCase(r.getSkillType()))
+            .collect(Collectors.toList());
+        List<SkillMatchResult> softResults = resultatsSkills.stream()
+            .filter(r -> "SOFT".equalsIgnoreCase(r.getSkillType()))
+            .collect(Collectors.toList());
+
+        double scoreTech = calculerScoreSkills(techResults);
+        double scoreSoft = calculerScoreSkills(softResults);
+
+        int wTech  = jobAvecSkills.getTechnicalSkillWeight() != null ? jobAvecSkills.getTechnicalSkillWeight() : 60;
+        int wSoft  = jobAvecSkills.getSoftSkillWeight()      != null ? jobAvecSkills.getSoftSkillWeight()      : 40;
+
+        double scoreSkills;
+        if (techResults.isEmpty() && !softResults.isEmpty()) {
+            scoreSkills = scoreSoft;
+        } else if (softResults.isEmpty() && !techResults.isEmpty()) {
+            scoreSkills = scoreTech;
+        } else if (!techResults.isEmpty() && !softResults.isEmpty()) {
+            scoreSkills = arrondir((scoreTech * wTech + scoreSoft * wSoft) / (double)(wTech + wSoft));
+        } else {
+            scoreSkills = 0.0;
+        }
+
         double scorePrerequisite = calculerScorePrerequisites(resultatsPrereqs);
         // Poids définis par le RH lors de la création du poste (défaut 70/30)
         double wSkills  = (jobAvecSkills.getSkillsWeight()        != null ? jobAvecSkills.getSkillsWeight()        : 70) / 100.0;
@@ -232,22 +274,7 @@ public class CvMatchingService {
             : arrondir(scoreSkills * wSkills + scorePrerequisite * wPrereqs);
         String recommendation = determinerRecommandation(scoreGlobal, forceRejet);
 
-        // ── 7. Analyse Mistral ────────────────────────────────────────────────
-        List<String> pointsForts   = new ArrayList<>();
-        List<String> pointsFaibles = new ArrayList<>();
-        String       analyseTexte  = "";
-        try {
-            MistralAnalysis analyse = analyserAvecMistral(
-                extraction.getTexteBrut(), jobAvecSkills, resultatsSkills, resultatsPrereqs
-            );
-            pointsForts   = analyse.forts();
-            pointsFaibles = analyse.faibles();
-            analyseTexte  = analyse.texte();
-        } catch (Exception e) {
-            log.warn("⚠️ Mistral indisponible — analyse ignorée : {}", e.getMessage());
-        }
-
-        // ── 8. Sauvegarde BDD (upsert) ────────────────────────────────────────
+        // ── 7. Sauvegarde BDD (upsert) ────────────────────────────────────────
         MatchingReport rapport = reportRepository
             .findByJobIdAndCandidateId(jobId, candidateId)
             .orElse(MatchingReport.builder().jobId(jobId).candidateId(candidateId).build());
@@ -258,15 +285,22 @@ public class CvMatchingService {
         rapport.setForceRejetRaison(forceRejetRaison);
         rapport.setSkillsJson(json(resultatsSkills));
         rapport.setPrerequisiteJson(json(resultatsPrereqs));
-        rapport.setPointsForts(json(pointsForts));
-        rapport.setPointsFaibles(json(pointsFaibles));
-        rapport.setAnalyseTexte(analyseTexte);
         rapport.setComputedAt(LocalDateTime.now());
         rapport.setCvHash(cvHash);
 
         MatchingReport saved = reportRepository.save(rapport);
         log.info("✅ Rapport sauvegardé — {}% — {} — {}",
             scoreGlobal, recommendation, candidat.getEmail());
+
+        // ── Sync job_matches (lu par getMatchScores + ApplicationStageProgress) ─
+        JobMatch jobMatch = jobMatchRepository
+            .findByCandidateIdAndJobId(candidateId, jobId)
+            .orElse(JobMatch.builder().candidateId(candidateId).jobId(jobId).build());
+        jobMatch.setScore((int) Math.round(scoreGlobal));
+        jobMatch.setVerdict(recommendation);
+        jobMatch.setCvHash(cvHash);
+        jobMatch.setComputedAt(LocalDateTime.now());
+        jobMatchRepository.save(jobMatch);
 
         // ── Construction du DTO de retour ─────────────────────────────────────
         return MatchingReportDTO.builder()
@@ -281,11 +315,10 @@ public class CvMatchingService {
             .forceRejetRaison(forceRejetRaison)
             .skills(resultatsSkills)
             .scoreSkills(scoreSkills)
+            .scoreSkillsTechnique(arrondir(scoreTech))
+            .scoreSkillsSoft(arrondir(scoreSoft))
             .prerequis(resultatsPrereqs)
             .scorePrerequisite(scorePrerequisite)
-            .pointsForts(pointsForts)
-            .pointsFaibles(pointsFaibles)
-            .analyseTexte(analyseTexte)
             .computedAt(saved.getComputedAt())
             .build();
     }
@@ -415,6 +448,7 @@ public class CvMatchingService {
                 .escoUri(escoUri)
                 .escoPreferredLabel(escoLabel)
                 .competenceTrouvee(meilleureComp)
+                .skillType(skill.getSkillType() != null ? skill.getSkillType() : "TECHNICAL")
                 .build());
         }
 
@@ -461,6 +495,12 @@ public class CvMatchingService {
 
         List<PrerequisiteMatchResult> resultats = new ArrayList<>();
 
+        // Hints Qwen (job-aware) : map type → détection
+        List<CvExtractionResult.PrerequisDetecte> qwenHints =
+            extraction.getPrerequisDetectes() != null
+                ? extraction.getPrerequisDetectes()
+                : Collections.emptyList();
+
         for (Prerequisite p : prereqs) {
             String  type        = p.getType() != null ? p.getType().toUpperCase() : "SKILL";
             String  valeur      = p.getValue() != null ? p.getValue() : "";
@@ -473,18 +513,18 @@ public class CvMatchingService {
             switch (type) {
                 case "DEGREE" -> {
                     String niveauRequisLow = valeur.toLowerCase();
-                    boolean exact = extraction.getDiplomes().stream().anyMatch(d ->
-                        d.getNiveau() != null && (
-                            d.getNiveau().toLowerCase().contains(niveauRequisLow) ||
-                            niveauRequisLow.contains(d.getNiveau().toLowerCase())
-                        )
-                    );
+                    boolean exact = extraction.getDiplomes() != null &&
+                        extraction.getDiplomes().stream().anyMatch(d ->
+                            d.getNiveau() != null && (
+                                d.getNiveau().toLowerCase().contains(niveauRequisLow) ||
+                                niveauRequisLow.contains(d.getNiveau().toLowerCase())
+                            )
+                        );
                     if (exact) {
-                        detecte = extraction.getDiplomes().isEmpty() ? valeur
-                            : extraction.getDiplomes().get(0).getNiveau();
+                        detecte = (extraction.getDiplomes() == null || extraction.getDiplomes().isEmpty())
+                            ? valeur : extraction.getDiplomes().get(0).getNiveau();
                         score = 1.0;
-                    } else if (!extraction.getDiplomes().isEmpty()) {
-                        // Diplôme inférieur → score partiel
+                    } else if (extraction.getDiplomes() != null && !extraction.getDiplomes().isEmpty()) {
                         detecte = extraction.getDiplomes().get(0).getNiveau();
                         score   = 0.5;
                     }
@@ -500,18 +540,42 @@ public class CvMatchingService {
                 }
                 case "LANGUAGE" -> {
                     String langLow = valeur.toLowerCase();
-                    boolean trouve = extraction.getLangues().stream().anyMatch(l ->
-                        l.getLangue() != null && l.getLangue().toLowerCase().contains(langLow)
-                    );
+                    boolean trouve = extraction.getLangues() != null &&
+                        extraction.getLangues().stream().anyMatch(l ->
+                            l.getLangue() != null && l.getLangue().toLowerCase().contains(langLow)
+                        );
                     if (trouve) { detecte = valeur; score = 1.0; }
                 }
                 case "CERTIFICATION" -> {
                     String certLow = valeur.toLowerCase();
-                    boolean trouve = extraction.getCertifications().stream()
-                        .anyMatch(c -> c.toLowerCase().contains(certLow));
+                    boolean trouve = extraction.getCertifications() != null &&
+                        extraction.getCertifications().stream()
+                            .anyMatch(c -> c != null && c.toLowerCase().contains(certLow));
                     if (trouve) { detecte = valeur; score = 1.0; }
                 }
-                default -> score = 0.5; // type inconnu → neutre
+                default -> score = 0.5;
+            }
+
+            // Enrichissement via hint Qwen (job-aware) : si Qwen confirme la présence,
+            // on utilise sa détection comme tiebreaker
+            Optional<CvExtractionResult.PrerequisDetecte> hint = qwenHints.stream()
+                .filter(h -> type.equalsIgnoreCase(h.getType())
+                          && valeur.equalsIgnoreCase(h.getRequis()))
+                .findFirst();
+            if (hint.isPresent()) {
+                if (hint.get().isPresent() && score < 0.6) {
+                    // Qwen a trouvé quelque chose que la logique classique a raté
+                    score = 0.6;
+                    if (detecte.isBlank() && hint.get().getDetecte() != null) {
+                        detecte = hint.get().getDetecte();
+                    }
+                } else if (!hint.get().isPresent() && score > 0.5) {
+                    // Qwen confirme l'absence — downgrade partiel
+                    score = Math.min(score, 0.5);
+                }
+                if (detecte.isBlank() && hint.get().getDetecte() != null) {
+                    detecte = hint.get().getDetecte();
+                }
             }
 
             resultats.add(PrerequisiteMatchResult.builder()
@@ -561,87 +625,6 @@ public class CvMatchingService {
         if (forceRejet || scoreGlobal < seuilEtudier)  return "REJETER";
         if (scoreGlobal >= seuilRetenir)                return "RETENIR";
         return "A_ETUDIER";
-    }
-
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // Analyse Mistral (réutilise OllamaMatchingService existant)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    private record MistralAnalysis(List<String> forts, List<String> faibles, String texte) {}
-
-    private MistralAnalysis analyserAvecMistral(
-            String texteCv,
-            Job job,
-            List<SkillMatchResult> skills,
-            List<PrerequisiteMatchResult> prereqs) {
-
-        // Construction d'un résumé structuré pour Mistral (enrichi ESCO)
-        StringBuilder offerText = new StringBuilder();
-        offerText.append("Poste : ").append(job.getTitle()).append("\n");
-
-        // Compétences validées (ESCO_MATCH + MATCHED + PARTIAL)
-        offerText.append("Compétences validées : ");
-        skills.stream()
-            .filter(s -> "ESCO_MATCH".equals(s.getMatchType())
-                      || "MATCHED".equals(s.getStatut())
-                      || "PARTIAL".equals(s.getStatut()))
-            .forEach(s -> {
-                offerText.append(s.getNom());
-                // Ajouter le label ESCO canonique si différent du nom brut
-                if (s.getEscoPreferredLabel() != null
-                        && !s.getEscoPreferredLabel().equalsIgnoreCase(s.getNom())) {
-                    offerText.append(" [=").append(s.getEscoPreferredLabel()).append("]");
-                }
-                if ("ESCO_MATCH".equals(s.getMatchType())) offerText.append("✓");
-                offerText.append(", ");
-            });
-
-        // Compétences manquantes avec label ESCO pour que Mistral raisonne avec le bon terme
-        offerText.append("\nCompétences manquantes : ");
-        skills.stream()
-            .filter(s -> "MISSING".equals(s.getStatut()))
-            .forEach(s -> {
-                offerText.append(s.getNom());
-                if (s.getEscoPreferredLabel() != null
-                        && !s.getEscoPreferredLabel().equalsIgnoreCase(s.getNom())) {
-                    offerText.append(" [ESCO: ").append(s.getEscoPreferredLabel()).append("]");
-                }
-                if (s.isObligatoire()) offerText.append(" (OBLIGATOIRE)");
-                offerText.append(", ");
-            });
-
-        offerText.append("\nDemande une analyse courte des points forts et lacunes en français.");
-
-        String cvResume = texteCv != null
-            ? texteCv.substring(0, Math.min(texteCv.length(), 1200))
-            : "";
-
-        OllamaMatchingService.MatchResult result = ollamaService.analyze(cvResume, offerText.toString());
-
-        // Extraction des points depuis le résumé Mistral
-        List<String> forts   = new ArrayList<>();
-        List<String> faibles = new ArrayList<>();
-        String       resume  = result.getResume() != null ? result.getResume() : "";
-
-        // Points forts = compétences maîtrisées
-        skills.stream()
-            .filter(s -> "MATCHED".equals(s.getStatut()))
-            .limit(5)
-            .forEach(s -> forts.add("Maîtrise confirmée : " + s.getNom()));
-        if (!resume.isBlank()) forts.add(resume);
-
-        // Points faibles = compétences manquantes
-        skills.stream()
-            .filter(s -> "MISSING".equals(s.getStatut()) && s.isObligatoire())
-            .limit(3)
-            .forEach(s -> faibles.add("Compétence obligatoire absente : " + s.getNom()));
-        skills.stream()
-            .filter(s -> "MISSING".equals(s.getStatut()) && !s.isObligatoire())
-            .limit(3)
-            .forEach(s -> faibles.add("Compétence manquante : " + s.getNom()));
-
-        return new MistralAnalysis(forts, faibles, resume);
     }
 
 
@@ -720,12 +703,14 @@ public class CvMatchingService {
             List<PrerequisiteMatchResult> prereqs = objectMapper.readValue(
                 r.getPrerequisiteJson() != null ? r.getPrerequisiteJson() : "[]",
                 new TypeReference<>() {});
-            List<String> forts = objectMapper.readValue(
-                r.getPointsForts() != null ? r.getPointsForts() : "[]",
-                new TypeReference<>() {});
-            List<String> faibles = objectMapper.readValue(
-                r.getPointsFaibles() != null ? r.getPointsFaibles() : "[]",
-                new TypeReference<>() {});
+
+            // Recalcul des sous-scores tech/soft depuis les données stockées
+            List<SkillMatchResult> techSkills = skills.stream()
+                .filter(s -> !"SOFT".equalsIgnoreCase(s.getSkillType()))
+                .collect(Collectors.toList());
+            List<SkillMatchResult> softSkills = skills.stream()
+                .filter(s -> "SOFT".equalsIgnoreCase(s.getSkillType()))
+                .collect(Collectors.toList());
 
             return MatchingReportDTO.builder()
                 .id(r.getId())
@@ -739,11 +724,10 @@ public class CvMatchingService {
                 .forceRejetRaison(r.getForceRejetRaison())
                 .skills(skills)
                 .scoreSkills(calculerScoreSkills(skills))
+                .scoreSkillsTechnique(arrondir(calculerScoreSkills(techSkills)))
+                .scoreSkillsSoft(arrondir(calculerScoreSkills(softSkills)))
                 .prerequis(prereqs)
                 .scorePrerequisite(calculerScorePrerequisites(prereqs))
-                .pointsForts(forts)
-                .pointsFaibles(faibles)
-                .analyseTexte(r.getAnalyseTexte())
                 .computedAt(r.getComputedAt())
                 .build();
         } catch (Exception e) {

@@ -17,6 +17,7 @@ import com.nexgenai.service.CandidateService;
 import com.nexgenai.service.ChatbotService;
 import com.nexgenai.service.CvMatchingService;
 import com.nexgenai.service.TestSessionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +57,10 @@ public class CandidateController {
     private final CvMatchingService               cvMatchingService;
     private final TestSessionService              testSessionService;
     private final AntiCheatService                antiCheatService;
+    private final ObjectMapper                    objectMapper;
+
+    @org.springframework.beans.factory.annotation.Value("${matching.python.timeout:30000}")
+    private long pythonTimeoutMs;
 
     // ── Profile ───────────────────────────────────────────────────────────────
 
@@ -285,7 +290,7 @@ public class CandidateController {
             @PathVariable String jobId) {
 
         log.info("🎯 SSE compute match: {} ↔ {}", u.getUsername(), jobId);
-        SseEmitter emitter = new SseEmitter(300_000L);
+        SseEmitter emitter = new SseEmitter(pythonTimeoutMs + 60_000L);
         emitter.onTimeout(emitter::complete);
         emitter.onError(e -> emitter.complete());
 
@@ -293,7 +298,7 @@ public class CandidateController {
         if (profile.getCvPath() == null) {
             try {
                 emitter.send(SseEmitter.event().name("match-error")
-                    .data(Map.of("error", "No CV uploaded")));
+                    .data(objectMapper.writeValueAsString(Map.of("error", "No CV uploaded"))));
                 emitter.complete();
             } catch (Exception ignored) {}
             return emitter;
@@ -306,16 +311,16 @@ public class CandidateController {
                     if (ex != null) {
                         Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                         emitter.send(SseEmitter.event().name("match-error")
-                            .data(Map.of("error", cause.getMessage())));
-                        emitter.completeWithError(ex);
+                            .data(objectMapper.writeValueAsString(Map.of("error", cause.getMessage()))));
+                        emitter.complete();
                     } else {
                         emitter.send(SseEmitter.event().name("match-ready")
-                            .data(Map.of(
+                            .data(objectMapper.writeValueAsString(Map.of(
                                 "jobId",   jobId,
                                 "score",   result.getScoreGlobal(),
                                 "verdict", result.getRecommendation(),
-                                "resume",  result.getAnalyseTexte() != null ? result.getAnalyseTexte() : ""
-                            )));
+                                "resume",  result.getForceRejetRaison() != null ? result.getForceRejetRaison() : ""
+                            ))));
                         emitter.complete();
                     }
                 } catch (Exception e) {

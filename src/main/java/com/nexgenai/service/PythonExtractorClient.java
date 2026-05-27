@@ -1,10 +1,12 @@
 package com.nexgenai.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.dto.matching.CvExtractionResult;
 import com.nexgenai.dto.matching.EmbedRequest;
 import com.nexgenai.dto.matching.EmbedResult;
 import com.nexgenai.dto.matching.EscoNormalizationRequest;
 import com.nexgenai.dto.matching.EscoNormalizationResult;
+import com.nexgenai.model.Prerequisite;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -21,6 +23,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Client HTTP vers le microservice Python d'extraction CV (port 8000).
@@ -34,29 +37,39 @@ import java.util.Map;
 @Slf4j
 public class PythonExtractorClient {
 
-    private final WebClient webClient;
+    private final WebClient    webClient;
+    private final ObjectMapper objectMapper;
 
     @Value("${matching.python.timeout:30000}")
     private long timeoutMs;
 
+    @Value("${matching.python.health.retries:10}")
+    private int healthRetries;
+
+    @Value("${matching.python.health.retry-delay-ms:5000}")
+    private long healthRetryDelayMs;
+
     public PythonExtractorClient(
-            @Value("${matching.python.url:http://localhost:8000}") String url) {
+            @Value("${matching.python.url:http://localhost:8000}") String url,
+            ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
         this.webClient = WebClient.builder()
             .baseUrl(url)
-            // Max 10 Mo pour accepter les gros CVs avec embeddings (vecteurs 768d × N skills)
             .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
             .build();
     }
 
     /**
-     * Envoie le CV au microservice Python pour extraction + calcul d'embeddings.
+     * Envoie le CV au microservice Python pour extraction Qwen + embeddings multilingues.
+     * Passe les prérequis du job pour une extraction job-aware (Qwen cible les bons éléments).
      *
      * @param cvBytes   contenu binaire du fichier CV
-     * @param filename  nom original (détecte l'extension PDF / DOCX)
-     * @return entités extraites avec embeddings JobBERTa
-     * @throws RuntimeException message métier si Python inaccessible
+     * @param filename  nom original (PDF / DOCX)
+     * @param jobPrereqs prérequis du poste (peut être null ou vide)
+     * @return entités extraites avec embeddings multilingues
      */
-    public CvExtractionResult extraireCv(byte[] cvBytes, String filename) {
+    public CvExtractionResult extraireCv(byte[] cvBytes, String filename,
+                                         List<Prerequisite> jobPrereqs) {
         MultipartBodyBuilder form = new MultipartBodyBuilder();
         form.part("fichier", new ByteArrayResource(cvBytes) {
             @Override
@@ -66,6 +79,23 @@ public class PythonExtractorClient {
                 ? MediaType.APPLICATION_PDF
                 : MediaType.APPLICATION_OCTET_STREAM
         );
+
+        if (jobPrereqs != null && !jobPrereqs.isEmpty()) {
+            try {
+                List<Map<String, Object>> prereqsJson = jobPrereqs.stream()
+                    .map(p -> {
+                        Map<String, Object> m = new java.util.HashMap<>();
+                        m.put("type",       p.getType());
+                        m.put("value",      p.getValue());
+                        m.put("obligatory", Boolean.TRUE.equals(p.getObligatory()));
+                        return m;
+                    })
+                    .collect(Collectors.toList());
+                form.part("job_prerequisites", objectMapper.writeValueAsString(prereqsJson));
+            } catch (Exception e) {
+                log.warn("⚠️ Impossible de sérialiser les prérequis job : {}", e.getMessage());
+            }
+        }
 
         try {
             CvExtractionResult result = webClient.post()
@@ -85,21 +115,20 @@ public class PythonExtractorClient {
             return result;
 
         } catch (WebClientRequestException e) {
-            // Connexion refusée : Python pas démarré
             log.error("❌ Microservice Python inaccessible ({})", e.getMessage());
-            throw new RuntimeException(
-                "Le service d'extraction IA est indisponible. " +
-                "Démarrez le microservice Python : uvicorn main:app --port 8000"
-            );
-        } catch (WebClientResponseException e) {
-            log.error("❌ Erreur Python {} : {}", e.getStatusCode(), e.getResponseBodyAsString());
-            throw new RuntimeException("Erreur extraction CV : " + e.getResponseBodyAsString());
-        } catch (RuntimeException e) {
-            // Re-throw les erreurs métier déjà formatées
-            throw e;
+            throw new RuntimeException("Le service d'extraction IA est indisponible...");
         } catch (Exception e) {
+            // Timeout ou autre
+            if (e.getCause() instanceof java.util.concurrent.TimeoutException
+                || e.getMessage() != null && e.getMessage().contains("timeout")) {
+                log.error("❌ Timeout extraction CV après {}ms", timeoutMs);
+                throw new RuntimeException(
+                    "Timeout : Qwen n'a pas répondu dans " + (timeoutMs/1000) + "s. " +
+                    "Augmentez matching.python.timeout ou réduisez le CV."
+                );
+            }
             log.error("❌ Erreur inattendue extraction : {}", e.getMessage());
-            throw new RuntimeException("Erreur inattendue lors de l'extraction : " + e.getMessage());
+            throw new RuntimeException("Erreur inattendue : " + e.getMessage());
         }
     }
 
@@ -165,7 +194,7 @@ public class PythonExtractorClient {
                 .bodyValue(new EscoNormalizationRequest(skills))
                 .retrieve()
                 .bodyToMono(EscoNormalizationResult.class)
-                .timeout(Duration.ofMillis(10_000))
+                .timeout(Duration.ofMillis(700_000))
                 .block();
             return result != null ? result : emptyNormalization();
         } catch (Exception e) {
@@ -213,19 +242,35 @@ public class PythonExtractorClient {
 
     /**
      * Vérifie que le microservice Python répond sur GET /health.
-     * Utilisé avant de lancer le matching pour donner une erreur claire.
+     * Réessaie jusqu'à healthRetries fois avec healthRetryDelayMs entre chaque tentative,
+     * pour laisser le temps au modèle sentence-transformers de charger au démarrage.
      */
     public boolean isAvailable() {
-        try {
-            webClient.get()
-                .uri("/health")
-                .retrieve()
-                .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(3))
-                .block();
-            return true;
-        } catch (Exception e) {
-            return false;
+        for (int attempt = 1; attempt <= healthRetries; attempt++) {
+            try {
+                webClient.get()
+                    .uri("/health")
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(3))
+                    .block();
+                log.info("✅ Python /health OK (tentative {}/{})", attempt, healthRetries);
+                return true;
+            } catch (Exception e) {
+                log.warn("⏳ Python pas encore prêt (tentative {}/{}) — attente {}ms : {}",
+                         attempt, healthRetries, healthRetryDelayMs, e.getMessage());
+                if (attempt < healthRetries) {
+                    try {
+                        Thread.sleep(healthRetryDelayMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                }
+            }
         }
+        log.error("❌ Python toujours inaccessible après {} tentatives ({} ms chacune)",
+                  healthRetries, healthRetryDelayMs);
+        return false;
     }
 }
