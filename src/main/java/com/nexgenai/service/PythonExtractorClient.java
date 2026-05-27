@@ -210,6 +210,56 @@ public class PythonExtractorClient {
     }
 
     /**
+     * Compare un prérequis de diplôme (texte libre HR) avec les diplômes extraits du CV.
+     * Utilise Qwen pour interpréter le niveau ISCED requis et bge-m3 pour la similarité domaine.
+     * Retourne un score entre 0.0 et 1.0 + métadonnées (best_match, niveau_isced_requis...).
+     * Méthode tolérante : retourne un map vide sans lever d'exception si l'endpoint est absent.
+     *
+     * @param prerequisite texte libre HR (ex: "Ingénieur informatique")
+     * @param diplomes     liste des diplômes extraits du CV
+     * @param obligatory   si true, l'exigence est éliminatoire
+     * @return map contenant score, best_match, niveau_isced_requis, domaine_requis, domain_similarity
+     */
+    public Map<String, Object> comparerFormation(String prerequisite,
+                                                  List<CvExtractionResult.DiplomeExtrait> diplomes,
+                                                  boolean obligatory) {
+        if (prerequisite == null || prerequisite.isBlank() || diplomes == null || diplomes.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        try {
+            List<Map<String, Object>> diplomesJson = diplomes.stream()
+                .map(d -> {
+                    Map<String, Object> m = new java.util.HashMap<>();
+                    m.put("niveau",      d.getNiveau());
+                    m.put("domaine",     d.getDomaine());
+                    m.put("niveauIsced", d.getNiveauIsced());
+                    return m;
+                })
+                .collect(Collectors.toList());
+
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("prerequisite", prerequisite);
+            body.put("diplomes",     diplomesJson);
+            body.put("obligatory",   obligatory);
+
+            Map<String, Object> result = webClient.post()
+                .uri("/compare-formation")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                .timeout(Duration.ofMillis(timeoutMs))
+                .block();
+
+            return result != null ? result : Collections.emptyMap();
+
+        } catch (Exception e) {
+            log.warn("⚠️ /compare-formation indisponible — fallback string match : {}", e.getMessage());
+            return Collections.emptyMap();
+        }
+    }
+
+    /**
      * Retourne les suggestions ESCO pour un terme partiel (autocomplete Angular).
      * Appelle GET /esco/skills?q=&limit= du microservice Python enhanced.
      * Retourne une liste vide (sans exception) si le service ne supporte pas ce endpoint.

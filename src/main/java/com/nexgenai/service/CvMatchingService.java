@@ -512,21 +512,28 @@ public class CvMatchingService {
 
             switch (type) {
                 case "DEGREE" -> {
-                    String niveauRequisLow = valeur.toLowerCase();
-                    boolean exact = extraction.getDiplomes() != null &&
-                        extraction.getDiplomes().stream().anyMatch(d ->
-                            d.getNiveau() != null && (
-                                d.getNiveau().toLowerCase().contains(niveauRequisLow) ||
-                                niveauRequisLow.contains(d.getNiveau().toLowerCase())
-                            )
-                        );
-                    if (exact) {
-                        detecte = (extraction.getDiplomes() == null || extraction.getDiplomes().isEmpty())
-                            ? valeur : extraction.getDiplomes().get(0).getNiveau();
-                        score = 1.0;
-                    } else if (extraction.getDiplomes() != null && !extraction.getDiplomes().isEmpty()) {
-                        detecte = extraction.getDiplomes().get(0).getNiveau();
-                        score   = 0.5;
+                    List<CvExtractionResult.DiplomeExtrait> diplomes = extraction.getDiplomes();
+                    if (diplomes != null && !diplomes.isEmpty()) {
+                        Map<String, Object> result = pythonClient.comparerFormation(
+                            valeur, diplomes, obligatoire);
+                        if (!result.isEmpty()) {
+                            Number scoreNum = (Number) result.get("score");
+                            score   = scoreNum != null ? scoreNum.doubleValue() : 0.0;
+                            Object bm = result.get("best_match");
+                            detecte = bm != null ? String.valueOf(bm) : diplomes.get(0).getNiveau();
+                            log.debug("📚 DEGREE '{}' → score={} match='{}'", valeur, score, detecte);
+                        } else {
+                            // /compare-formation unavailable — fallback string match
+                            String niveauRequisLow = valeur.toLowerCase();
+                            boolean exact = diplomes.stream().anyMatch(d ->
+                                d.getNiveau() != null && (
+                                    d.getNiveau().toLowerCase().contains(niveauRequisLow) ||
+                                    niveauRequisLow.contains(d.getNiveau().toLowerCase())
+                                )
+                            );
+                            detecte = diplomes.get(0).getNiveau();
+                            score   = exact ? 1.0 : 0.5;
+                        }
                     }
                 }
                 case "EXPERIENCE" -> {
