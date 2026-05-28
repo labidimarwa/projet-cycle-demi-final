@@ -19,8 +19,6 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -138,81 +136,34 @@ public class CvMatchingService {
             return deserialiserRapport(r, jobAvecSkills, candidat);
         }
 
-        log.info("🎯 Matching : {} ↔ {}", candidat.getEmail(), jobAvecSkills.getTitle());
+        log.info("🎯 Matching sémantique : {} ↔ {}", candidat.getEmail(), jobAvecSkills.getTitle());
 
-        // ── 1. Extraction CV via Python (job-aware Qwen + embeddings multilingues) ──
+        // ── 1. Build job skills list for Python ───────────────────────────────
+        List<Map<String, Object>> skillsMaps = jobAvecSkills.getTechnicalSkills().stream()
+            .filter(s -> s.getName() != null)
+            .map(s -> {
+                Map<String, Object> m = new java.util.HashMap<>();
+                m.put("nom",       s.getName());
+                m.put("type",      s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+                m.put("obligatoire", Boolean.TRUE.equals(s.getObligatory()));
+                return m;
+            })
+            .collect(Collectors.toList());
+
+        // ── 2. Python : MiniLM (skills) + RAG+Qwen (prérequis) ───────────────
         CvExtractionResult extraction = pythonClient.extraireCv(
-            cvBytes, cvFilename, jobAvecPrereqs.getPrerequisites()
+            cvBytes, cvFilename, jobAvecPrereqs.getPrerequisites(), skillsMaps
         );
-        int nbComp = extraction.getCompetences() != null ? extraction.getCompetences().size() : 0;
-        log.info("📄 {} compétences extraites du CV (hard={}, soft={})",
-            nbComp,
-            extraction.getHardSkills() != null ? extraction.getHardSkills().size() : 0,
-            extraction.getSoftSkills() != null ? extraction.getSoftSkills().size() : 0);
 
-        // ── 2. Embeddings des skills du poste via Python ──────────────────────
-        // Contrainte 1 : les skills viennent du job créé par le RH
-        List<String> nomsSkills = jobAvecSkills.getTechnicalSkills().stream()
-            .map(TechnicalSkill::getName)
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
+        List<CvExtractionResult.SkillEvalue>    skillsEvalues  = extraction.getSkillsEvalues()    != null ? extraction.getSkillsEvalues()    : Collections.emptyList();
+        List<CvExtractionResult.PrerequisEvalue> prereqsEvalues = extraction.getPrerequisEvalues() != null ? extraction.getPrerequisEvalues() : Collections.emptyList();
 
-        Map<String, List<Double>> embeddingsPoste = Collections.emptyMap();
-        if (!nomsSkills.isEmpty()) {
-            EmbedResult embedResult = pythonClient.calculerEmbeddings(nomsSkills);
-            embeddingsPoste = embedResult.getEmbeddings() != null
-                ? embedResult.getEmbeddings() : Collections.emptyMap();
-        }
-
-        // ── 2b. Normalisation ESCO (additive — no-op si service non enhanced) ──
-        // Normalise les noms bruts des compétences CV et du poste vers des URIs ESCO.
-        // Si Python tourne sur main.py (sans /normalize), retourne résultat vide
-        // sans exception et le matching continue avec cosinus seul.
-        List<String> cvSkillNames = extraction.getCompetences().stream()
-            .map(CvExtractionResult.CompetenceExtraite::getNom)
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
-
-        Map<String, String> cvSkillToEscoUri = Collections.emptyMap();
-        if (!cvSkillNames.isEmpty()) {
-            EscoNormalizationResult cvNorm = pythonClient.normaliserSkills(cvSkillNames);
-            if (cvNorm.getNormalized() != null) {
-                cvSkillToEscoUri = cvNorm.getNormalized().stream()
-                    .filter(n -> n.getEscoUri() != null)
-                    .collect(Collectors.toMap(
-                        EscoNormalizationResult.NormalizedSkill::getRaw,
-                        EscoNormalizationResult.NormalizedSkill::getEscoUri,
-                        (a, b) -> a
-                    ));
-            }
-        }
-
-        Map<String, EscoNormalizationResult.NormalizedSkill> jobSkillToEsco = Collections.emptyMap();
-        if (!nomsSkills.isEmpty()) {
-            EscoNormalizationResult jobNorm = pythonClient.normaliserSkills(nomsSkills);
-            if (jobNorm.getNormalized() != null) {
-                jobSkillToEsco = jobNorm.getNormalized().stream()
-                    .collect(Collectors.toMap(
-                        EscoNormalizationResult.NormalizedSkill::getRaw,
-                        n -> n,
-                        (a, b) -> a
-                    ));
-            }
-        }
-
-        int escoMatches = cvSkillToEscoUri.size();
-        if (escoMatches > 0) {
-            log.info("🏷️  ESCO : {} compétences CV normalisées, {} skills poste normalisés",
-                escoMatches, jobSkillToEsco.size());
-        }
+        log.info("📄 Python → {} skills évalués, {} prérequis évalués",
+            skillsEvalues.size(), prereqsEvalues.size());
 
         // ── 3. Scoring des compétences ────────────────────────────────────────
         List<SkillMatchResult> resultatsSkills = scorerCompetences(
-            jobAvecSkills.getTechnicalSkills(),
-            extraction.getCompetences(),
-            embeddingsPoste,
-            cvSkillToEscoUri,
-            jobSkillToEsco
+            jobAvecSkills.getTechnicalSkills(), skillsEvalues
         );
 
         // ── 4a. Rejet forcé — skill obligatoire non satisfait (Contrainte 2) ──
@@ -222,8 +173,7 @@ public class CvMatchingService {
 
         // ── 5. Scoring des prérequis ──────────────────────────────────────────
         List<PrerequisiteMatchResult> resultatsPrereqs = scorerPrerequisites(
-            jobAvecPrereqs.getPrerequisites(),
-            extraction
+            jobAvecPrereqs.getPrerequisites(), prereqsEvalues
         );
 
         // ── 4b. Rejet forcé — prérequis obligatoire non satisfait (Contrainte 3) ──
@@ -354,100 +304,39 @@ public class CvMatchingService {
     // ═════════════════════════════════════════════════════════════════════════
 
     /**
-     * Pour chaque compétence requise par le poste, calcule la similarité cosinus
-     * avec les compétences du CV.
-     *
+     * Construit les SkillMatchResult en utilisant les scores MiniLM calculés par Python.
      * Contrainte 1 : poids vient du job (jamais codé en dur).
-     * Contrainte 5 : seule la similarité cosinus est calculée ici.
-     */
-    /**
-     * Pour chaque compétence requise, calcule le meilleur score de correspondance.
-     * Priorité : ESCO_MATCH (même URI) > cosinus JobBERTa > fallback mot-clé.
-     *
-     * @param cvSkillToEscoUri   URI ESCO de chaque compétence du CV (vide si ESCO indisponible)
-     * @param jobSkillToEsco     normalisation ESCO de chaque skill du poste (vide si ESCO indisponible)
+     * Contrainte 5 : zéro calcul d'embeddings dans Java — scores viennent de Python.
      */
     private List<SkillMatchResult> scorerCompetences(
             List<TechnicalSkill> skillsPoste,
-            List<CvExtractionResult.CompetenceExtraite> competencesCv,
-            Map<String, List<Double>> embeddingsPoste,
-            Map<String, String> cvSkillToEscoUri,
-            Map<String, EscoNormalizationResult.NormalizedSkill> jobSkillToEsco) {
+            List<CvExtractionResult.SkillEvalue> skillsEvalues) {
 
         List<SkillMatchResult> resultats = new ArrayList<>();
 
-        // Construire l'ensemble des URIs ESCO présents dans le CV (pour ESCO_MATCH O(1))
-        Set<String> cvEscoUris = new HashSet<>(cvSkillToEscoUri.values());
+        // Index des scores Python par nom de skill (insensible à la casse)
+        Map<String, Double> scoreMap = new java.util.HashMap<>();
+        if (skillsEvalues != null) {
+            skillsEvalues.forEach(e -> {
+                if (e.getNom() != null) scoreMap.put(e.getNom().toLowerCase(), e.getScore());
+            });
+        }
 
         for (TechnicalSkill skill : skillsPoste) {
             String  nom         = skill.getName();
-            int     poids       = (skill.getWeight() != null && skill.getWeight() > 0)
-                                  ? skill.getWeight() : 10;
+            int     poids       = (skill.getWeight() != null && skill.getWeight() > 0) ? skill.getWeight() : 10;
             boolean obligatoire = Boolean.TRUE.equals(skill.getObligatory());
 
-            List<Double> embPoste    = embeddingsPoste.get(nom);
-            double       maxSim      = 0.0;
-            String       meilleureComp = "";
-            String       matchType   = null;
-            String       escoUri     = null;
-            String       escoLabel   = null;
-
-            // ── ESCO_MATCH (Tier 0) : même URI ESCO CV ↔ poste ──────────────
-            EscoNormalizationResult.NormalizedSkill jobEsco = jobSkillToEsco.get(nom);
-            if (jobEsco != null && jobEsco.getEscoUri() != null
-                    && cvEscoUris.contains(jobEsco.getEscoUri())) {
-                // Synonyme détecté via ontologie (ex: "JS" CV ↔ "JavaScript" poste)
-                matchType     = "ESCO_MATCH";
-                maxSim        = 1.0;
-                escoUri       = jobEsco.getEscoUri();
-                escoLabel     = jobEsco.getPreferredLabel();
-                // Retrouver la compétence CV qui a le même URI
-                meilleureComp = cvSkillToEscoUri.entrySet().stream()
-                    .filter(e -> e.getValue().equals(jobEsco.getEscoUri()))
-                    .map(Map.Entry::getKey)
-                    .findFirst().orElse(nom);
-            }
-
-            // ── Cosinus JobBERTa (Tier 1) si pas d'ESCO_MATCH ────────────────
-            if (matchType == null) {
-                if (jobEsco != null) {
-                    escoUri   = jobEsco.getEscoUri();
-                    escoLabel = jobEsco.getPreferredLabel();
-                }
-                if (embPoste != null && !competencesCv.isEmpty()) {
-                    for (CvExtractionResult.CompetenceExtraite comp : competencesCv) {
-                        if (comp.getEmbedding() != null && !comp.getEmbedding().isEmpty()) {
-                            double sim = cosinus(embPoste, comp.getEmbedding());
-                            if (sim > maxSim) {
-                                maxSim = sim;
-                                meilleureComp = comp.getNom();
-                            }
-                        }
-                    }
-                } else {
-                    // Fallback mot-clé si embeddings indisponibles
-                    boolean kw = competencesCv.stream().anyMatch(c ->
-                        c.getNom() != null && (
-                            c.getNom().toLowerCase().contains(nom.toLowerCase()) ||
-                            nom.toLowerCase().contains(c.getNom().toLowerCase())
-                        )
-                    );
-                    maxSim        = kw ? 0.80 : 0.0;
-                    meilleureComp = kw ? nom  : "";
-                }
-                matchType = statut(maxSim);
-            }
+            double score = nom != null ? scoreMap.getOrDefault(nom.toLowerCase(), 0.0) : 0.0;
 
             resultats.add(SkillMatchResult.builder()
                 .nom(nom)
                 .poids(poids)
                 .obligatoire(obligatoire)
-                .similarite(arrondir3(maxSim))
-                .statut(statut(maxSim))
-                .matchType(matchType)
-                .escoUri(escoUri)
-                .escoPreferredLabel(escoLabel)
-                .competenceTrouvee(meilleureComp)
+                .similarite(arrondir3(score))
+                .statut(statut(score))
+                .matchType(statut(score))
+                .competenceTrouvee(score >= seuilPartiel ? nom : "")
                 .skillType(skill.getSkillType() != null ? skill.getSkillType() : "TECHNICAL")
                 .build());
         }
@@ -461,24 +350,11 @@ public class CvMatchingService {
         return "MISSING";
     }
 
-    /**
-     * Score pondéré des compétences.
-     * Contrainte 1 : utilise les poids définis par le RH.
-     * ESCO_MATCH est prioritaire sur le statut cosinus (score 100%).
-     * Null-safe sur matchType pour les anciens rapports BDD (fallback sur statut).
-     */
+    /** Score pondéré des compétences — utilise directement le score MiniLM 0–1 × 100. */
     private double calculerScoreSkills(List<SkillMatchResult> resultats) {
         double poids = 0, total = 0;
         for (SkillMatchResult r : resultats) {
-            String type = r.getMatchType() != null ? r.getMatchType() : r.getStatut();
-            double contribution = switch (type) {
-                case "ESCO_MATCH"    -> 100.0;
-                case "BROADER_MATCH" -> 60.0;
-                case "MATCHED"       -> 100.0;
-                case "PARTIAL"       -> 50.0;
-                default              -> 0.0;
-            };
-            total += contribution * r.getPoids();
+            total += r.getSimilarite() * 100.0 * r.getPoids();
             poids += r.getPoids();
         }
         return poids > 0 ? arrondir(total / poids) : 0.0;
@@ -489,17 +365,15 @@ public class CvMatchingService {
     // Scoring des prérequis
     // ═════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Construit les PrerequisiteMatchResult en utilisant les scores Qwen RAG calculés par Python.
+     * Zéro switch/case par type : la sémantique est entièrement dans Python.
+     */
     private List<PrerequisiteMatchResult> scorerPrerequisites(
             List<Prerequisite> prereqs,
-            CvExtractionResult extraction) {
+            List<CvExtractionResult.PrerequisEvalue> prerequisEvalues) {
 
         List<PrerequisiteMatchResult> resultats = new ArrayList<>();
-
-        // Hints Qwen (job-aware) : map type → détection
-        List<CvExtractionResult.PrerequisDetecte> qwenHints =
-            extraction.getPrerequisDetectes() != null
-                ? extraction.getPrerequisDetectes()
-                : Collections.emptyList();
 
         for (Prerequisite p : prereqs) {
             String  type        = p.getType() != null ? p.getType().toUpperCase() : "SKILL";
@@ -507,83 +381,19 @@ public class CvMatchingService {
             boolean obligatoire = Boolean.TRUE.equals(p.getObligatory());
             int     poids       = (p.getWeight() != null && p.getWeight() > 0) ? p.getWeight() : 100;
 
-            double  score   = 0.0;
-            String  detecte = "";
-
-            switch (type) {
-                case "DEGREE" -> {
-                    List<CvExtractionResult.DiplomeExtrait> diplomes = extraction.getDiplomes();
-                    if (diplomes != null && !diplomes.isEmpty()) {
-                        Map<String, Object> result = pythonClient.comparerFormation(
-                            valeur, diplomes, obligatoire);
-                        if (!result.isEmpty()) {
-                            Number scoreNum = (Number) result.get("score");
-                            score   = scoreNum != null ? scoreNum.doubleValue() : 0.0;
-                            Object bm = result.get("best_match");
-                            detecte = bm != null ? String.valueOf(bm) : diplomes.get(0).getNiveau();
-                            log.debug("📚 DEGREE '{}' → score={} match='{}'", valeur, score, detecte);
-                        } else {
-                            // /compare-formation unavailable — fallback string match
-                            String niveauRequisLow = valeur.toLowerCase();
-                            boolean exact = diplomes.stream().anyMatch(d ->
-                                d.getNiveau() != null && (
-                                    d.getNiveau().toLowerCase().contains(niveauRequisLow) ||
-                                    niveauRequisLow.contains(d.getNiveau().toLowerCase())
-                                )
-                            );
-                            detecte = diplomes.get(0).getNiveau();
-                            score   = exact ? 1.0 : 0.5;
-                        }
-                    }
-                }
-                case "EXPERIENCE" -> {
-                    int moisRequis = parseMoisExperience(valeur);
-                    int moisCv     = extraction.getExperienceMois();
-                    detecte = (moisCv / 12) + " an(s)";
-                    if      (moisCv >= moisRequis)          score = 1.0;
-                    else if (moisCv >= moisRequis * 0.70)   score = 0.6;
-                    else if (moisCv >= moisRequis * 0.50)   score = 0.3;
-                    else                                     score = 0.0;
-                }
-                case "LANGUAGE" -> {
-                    String langLow = valeur.toLowerCase();
-                    boolean trouve = extraction.getLangues() != null &&
-                        extraction.getLangues().stream().anyMatch(l ->
-                            l.getLangue() != null && l.getLangue().toLowerCase().contains(langLow)
-                        );
-                    if (trouve) { detecte = valeur; score = 1.0; }
-                }
-                case "CERTIFICATION" -> {
-                    String certLow = valeur.toLowerCase();
-                    boolean trouve = extraction.getCertifications() != null &&
-                        extraction.getCertifications().stream()
-                            .anyMatch(c -> c != null && c.toLowerCase().contains(certLow));
-                    if (trouve) { detecte = valeur; score = 1.0; }
-                }
-                default -> score = 0.5;
-            }
-
-            // Enrichissement via hint Qwen (job-aware) : si Qwen confirme la présence,
-            // on utilise sa détection comme tiebreaker
-            Optional<CvExtractionResult.PrerequisDetecte> hint = qwenHints.stream()
-                .filter(h -> type.equalsIgnoreCase(h.getType())
-                          && valeur.equalsIgnoreCase(h.getRequis()))
+            // Find Python's evaluation for this prerequisite (match by type + requis)
+            Optional<CvExtractionResult.PrerequisEvalue> eval = prerequisEvalues.stream()
+                .filter(e -> type.equalsIgnoreCase(e.getType()))
+                .filter(e -> e.getRequis() != null && (
+                    valeur.equalsIgnoreCase(e.getRequis()) ||
+                    e.getRequis().toLowerCase().contains(valeur.toLowerCase()) ||
+                    valeur.toLowerCase().contains(e.getRequis().toLowerCase())
+                ))
                 .findFirst();
-            if (hint.isPresent()) {
-                if (hint.get().isPresent() && score < 0.6) {
-                    // Qwen a trouvé quelque chose que la logique classique a raté
-                    score = 0.6;
-                    if (detecte.isBlank() && hint.get().getDetecte() != null) {
-                        detecte = hint.get().getDetecte();
-                    }
-                } else if (!hint.get().isPresent() && score > 0.5) {
-                    // Qwen confirme l'absence — downgrade partiel
-                    score = Math.min(score, 0.5);
-                }
-                if (detecte.isBlank() && hint.get().getDetecte() != null) {
-                    detecte = hint.get().getDetecte();
-                }
-            }
+
+            double score   = eval.map(CvExtractionResult.PrerequisEvalue::getScore).orElse(0.0);
+            String detecte = eval.map(CvExtractionResult.PrerequisEvalue::getDetecte).orElse("");
+            if (detecte == null) detecte = "";
 
             resultats.add(PrerequisiteMatchResult.builder()
                 .type(type)
@@ -608,19 +418,6 @@ public class CvMatchingService {
             totalPoids   += p;
         }
         return totalPoids > 0 ? arrondir(totalPondere / totalPoids * 100.0) : 0.0;
-    }
-
-    /** Parse "3 ans", "36 mois", "2 years" → nombre de mois. */
-    private int parseMoisExperience(String valeur) {
-        if (valeur == null || valeur.isBlank()) return 0;
-        Matcher m = Pattern.compile("(\\d+)\\s*(ans?|years?|mois|months?)", Pattern.CASE_INSENSITIVE)
-            .matcher(valeur);
-        if (m.find()) {
-            int nb    = Integer.parseInt(m.group(1));
-            String u  = m.group(2).toLowerCase();
-            return u.startsWith("mo") ? nb : nb * 12;
-        }
-        return 0;
     }
 
 
@@ -667,23 +464,6 @@ public class CvMatchingService {
     // ═════════════════════════════════════════════════════════════════════════
     // Utilitaires mathématiques et JSON
     // ═════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Similarité cosinus entre deux vecteurs d'embeddings.
-     * C'est le SEUL calcul mathématique que Spring Boot fait — les embeddings
-     * eux-mêmes viennent de Python (Contrainte 5).
-     */
-    private double cosinus(List<Double> a, List<Double> b) {
-        if (a == null || b == null || a.size() != b.size()) return 0.0;
-        double dot = 0, normA = 0, normB = 0;
-        for (int i = 0; i < a.size(); i++) {
-            dot   += a.get(i) * b.get(i);
-            normA += a.get(i) * a.get(i);
-            normB += b.get(i) * b.get(i);
-        }
-        if (normA == 0 || normB == 0) return 0.0;
-        return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-    }
 
     private double arrondir(double v)  { return Math.round(v * 10.0)    / 10.0; }
     private double arrondir3(double v) { return Math.round(v * 1000.0)  / 1000.0; }

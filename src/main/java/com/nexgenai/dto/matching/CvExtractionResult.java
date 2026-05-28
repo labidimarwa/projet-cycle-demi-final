@@ -5,8 +5,9 @@ import lombok.Data;
 import java.util.List;
 
 /**
- * Mappe exactement la réponse JSON de POST /extract du microservice Python.
- * Contient le texte brut + entités extraites + embeddings JobBERTa.
+ * Mappe la réponse JSON de POST /extract (pipeline job-driven sémantique).
+ * Python calcule tous les scores (MiniLM + Qwen RAG) ; Java applique
+ * uniquement les pondérations et les règles métier.
  */
 @Data
 public class CvExtractionResult {
@@ -14,74 +15,39 @@ public class CvExtractionResult {
     @JsonProperty("texte_brut")
     private String texteBrut;
 
-    /** Compétences avec leurs embeddings calculés par Python (JobBERTa). */
-    @JsonProperty("competences")
-    private List<CompetenceExtraite> competences;
+    /** Score MiniLM de chaque skill du job contre les paragraphes du CV. */
+    @JsonProperty("skills_evalues")
+    private List<SkillEvalue> skillsEvalues;
 
-    /** Durée d'expérience estimée en mois. */
-    @JsonProperty("experience_mois")
-    private int experienceMois;
-
-    @JsonProperty("diplomes")
-    private List<DiplomeExtrait> diplomes;
-
-    @JsonProperty("langues")
-    private List<LangueExtraite> langues;
-
-    @JsonProperty("certifications")
-    private List<String> certifications;
-
-    @JsonProperty("postes")
-    private List<String> postes;
-
-    @JsonProperty("secteurs")
-    private List<String> secteurs;
-
-    /** Liste brute des hard skills extraits par Qwen. */
-    @JsonProperty("hard_skills")
-    private List<String> hardSkills;
-
-    /** Liste brute des soft skills extraits par Qwen. */
-    @JsonProperty("soft_skills")
-    private List<String> softSkills;
-
-    /** Détections des prérequis du job effectuées par Qwen (job-aware). */
-    @JsonProperty("prerequis_detectes")
-    private List<PrerequisDetecte> prerequisDetectes;
+    /** Évaluation sémantique (RAG + Qwen) de chaque prérequis du job. */
+    @JsonProperty("prerequis_evalues")
+    private List<PrerequisEvalue> prerequisEvalues;
 
     // ─── Sous-classes ─────────────────────────────────────────────────────────
 
-    /** Une compétence extraite avec son embedding multilingue. */
     @Data
-    public static class CompetenceExtraite {
-        private String nom;
-        /** Vecteur d'embedding multilingue (768 dims). */
-        private List<Double> embedding;
-        /** Score de confiance (1.0 pour Qwen). */
-        private double confiance;
+    public static class SkillEvalue {
+        /** Nom de la compétence (tel que défini dans le job). */
+        private String  nom;
+        /** TECHNICAL ou SOFT. */
+        private String  type;
+        /** Similarité cosinus MiniLM entre le nom du skill et le meilleur paragraphe CV (0–1). */
+        private double  score;
+        /** true si score >= 0.55. */
+        private boolean present;
     }
 
     @Data
-    public static class DiplomeExtrait {
-        private String  niveau;        // Master, Licence, Bac+2…
-        private String  domaine;
-        private String  etablissement;
-        @JsonProperty("niveauIsced")
-        private Integer niveauIsced;   // ISCED level assigned by Qwen (5=Bac+2, 6=Bac+3, 7=Bac+5/Ingénieur, 8=PhD)
-    }
-
-    @Data
-    public static class LangueExtraite {
-        private String langue;
-        private String niveau;       // Natif, Courant, Intermédiaire, Débutant
-    }
-
-    /** Résultat de la détection job-aware d'un prérequis par Qwen. */
-    @Data
-    public static class PrerequisDetecte {
-        private String  type;     // DEGREE, EXPERIENCE, LANGUAGE, CERTIFICATION, SKILL
-        private String  requis;   // valeur demandée par le job
-        private String  detecte;  // valeur trouvée dans le CV (null si absent)
-        private boolean present;  // true si Qwen estime que le prérequis est satisfait
+    public static class PrerequisEvalue {
+        /** DEGREE | EXPERIENCE | LANGUAGE | CERTIFICATION | SKILL */
+        @JsonProperty("type")    private String  type;
+        /** Valeur demandée par le job (reprise de la définition RH). */
+        @JsonProperty("requis")  private String  requis;
+        /** Ce que Qwen a trouvé dans le CV (null si absent). */
+        @JsonProperty("detecte") private String  detecte;
+        /** true si Qwen estime que le prérequis est satisfait. */
+        @JsonProperty("present") private boolean present;
+        /** Score sémantique 0–1 attribué par Qwen après analyse RAG. */
+        @JsonProperty("score")   private double  score;
     }
 }
