@@ -152,8 +152,15 @@ public class CvMatchingService {
 
         // ── 2. Python : MiniLM (skills) + RAG+Qwen (prérequis) ───────────────
         CvExtractionResult extraction = pythonClient.extraireCv(
-            cvBytes, cvFilename, jobAvecPrereqs.getPrerequisites(), skillsMaps
-        );
+        	    cvBytes, cvFilename, jobAvecPrereqs.getPrerequisites(), skillsMaps
+        	);
+
+        	// ← AJOUTE ICI
+        	log.info("📥 Raw extraction reçue — skillsEvalues={} prerequisEvalues={}",
+        	    extraction.getSkillsEvalues(),
+        	    extraction.getPrerequisEvalues()
+        	);
+        
 
         List<CvExtractionResult.SkillEvalue>    skillsEvalues  = extraction.getSkillsEvalues()    != null ? extraction.getSkillsEvalues()    : Collections.emptyList();
         List<CvExtractionResult.PrerequisEvalue> prereqsEvalues = extraction.getPrerequisEvalues() != null ? extraction.getPrerequisEvalues() : Collections.emptyList();
@@ -316,10 +323,18 @@ public class CvMatchingService {
 
         // Index des scores Python par nom de skill (insensible à la casse)
         Map<String, Double> scoreMap = new java.util.HashMap<>();
+        
+        log.info("📥 scoreMap reçu de Python : {}", scoreMap);
+        log.info("📥 Skills du job à matcher : {}",
+            skillsPoste.stream()
+                .map(s -> s.getName() + "[" + s.getSkillType() + "]")
+                .collect(Collectors.toList())
+        );
         if (skillsEvalues != null) {
-            skillsEvalues.forEach(e -> {
-                if (e.getNom() != null) scoreMap.put(e.getNom().toLowerCase(), e.getScore());
-            });
+        	skillsEvalues.forEach(e -> {
+        	    if (e.getNom() != null) 
+        	        scoreMap.put(e.getNom().trim().toLowerCase(), e.getScore()); // ← trim()
+        	});
         }
 
         for (TechnicalSkill skill : skillsPoste) {
@@ -327,7 +342,7 @@ public class CvMatchingService {
             int     poids       = (skill.getWeight() != null && skill.getWeight() > 0) ? skill.getWeight() : 10;
             boolean obligatoire = Boolean.TRUE.equals(skill.getObligatory());
 
-            double score = nom != null ? scoreMap.getOrDefault(nom.toLowerCase(), 0.0) : 0.0;
+            double score = nom != null ? scoreMap.getOrDefault(nom.trim().toLowerCase(), 0.0) : 0.0;
 
             resultats.add(SkillMatchResult.builder()
                 .nom(nom)

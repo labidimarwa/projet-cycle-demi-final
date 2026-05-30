@@ -6,6 +6,7 @@ import com.nexgenai.dto.candidate.StageProgressDTO;
 import com.nexgenai.dto.hr.*;
 import com.nexgenai.model.*;
 import com.nexgenai.model.Application.ApplicationStatus;
+import com.nexgenai.model.enums.NotificationType;
 import com.nexgenai.model.enums.StageProgressStatus;
 import com.nexgenai.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +43,7 @@ public class HrService {
     private final JobMatchRepository                  jobMatchRepository;
     private final ChatSessionRepository               chatSessionRepository;
     private final EmailService                        emailService;
+    private final NotificationService                 notificationService;
     private final ObjectMapper                        objectMapper;
 
     @Value("${app.cv.upload-dir:uploads/cv}")
@@ -326,6 +328,42 @@ public class HrService {
 
             sendAcceptanceEmail(candidate, job, match.getScore(), nextStageName, req.getNote());
 
+            // Real-time: notify candidate they were accepted
+            notificationService.send(
+                candidateId, NotificationType.APPLICATION_ACCEPTED,
+                "Application Accepted!",
+                "Congratulations! Your application for \"" + job.getTitle() + "\" has been accepted.",
+                jobId, "JOB", "/candidate/applications"
+            );
+
+            // If next stage is a test, send a dedicated test-assigned notification
+            if (nextStage != null) {
+                String nextType = nextStage.getStageType();
+                if ("TECHNICAL_TEST".equals(nextType) || "RH_TEST".equals(nextType)) {
+                    notificationService.send(
+                        candidateId, NotificationType.TEST_ASSIGNED,
+                        "New Test Available",
+                        "You have a new test to complete: \"" + nextStage.getStageName() + "\".",
+                        jobId, "JOB", "/candidate/applications"
+                    );
+                } else if ("RH_INTERVIEW".equals(nextType) || "TECHNICAL_INTERVIEW".equals(nextType)
+                        || "ADMIN_INTERVIEW".equals(nextType)) {
+                    notificationService.send(
+                        candidateId, NotificationType.INTERVIEW_SCHEDULED,
+                        "Interview Stage Activated",
+                        "Your next step is an interview: \"" + nextStage.getStageName() + "\".",
+                        jobId, "JOB", "/candidate/applications"
+                    );
+                } else {
+                    notificationService.send(
+                        candidateId, NotificationType.STAGE_COMPLETED,
+                        "Stage Advanced",
+                        "You have been moved to the next stage: \"" + nextStage.getStageName() + "\".",
+                        jobId, "JOB", "/candidate/applications"
+                    );
+                }
+            }
+
         } else {
             currentStage.setStatus(StageProgressStatus.REJECTED);
             currentStage.setCompletedAt(LocalDateTime.now());
@@ -339,6 +377,14 @@ public class HrService {
                 });
 
             sendRejectionEmail(candidate, job, req.getNote());
+
+            // Real-time: notify candidate they were rejected
+            notificationService.send(
+                candidateId, NotificationType.APPLICATION_REJECTED,
+                "Application Update",
+                "Thank you for applying to \"" + job.getTitle() + "\". We have decided to move forward with other candidates.",
+                jobId, "JOB", "/candidate/applications"
+            );
         }
 
         return ApplicationDecisionResponse.builder()

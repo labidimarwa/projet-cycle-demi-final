@@ -101,6 +101,8 @@ public class JobResponse {
         private Boolean obligatory, customType;
         private List<String> options;
         private Integer weight;
+        private String instruction;
+        private String jsonSchema;
         public String getId() { return id; } public void setId(String id) { this.id = id; }
         public String getType() { return type; } public void setType(String t) { this.type = t; }
         public String getValue() { return value; } public void setValue(String v) { this.value = v; }
@@ -109,6 +111,8 @@ public class JobResponse {
         public Boolean getCustomType() { return customType; } public void setCustomType(Boolean c) { this.customType = c; }
         public List<String> getOptions() { return options; } public void setOptions(List<String> o) { this.options = o; }
         public Integer getWeight() { return weight; } public void setWeight(Integer w) { this.weight = w; }
+        public String getInstruction() { return instruction; } public void setInstruction(String i) { this.instruction = i; }
+        public String getJsonSchema() { return jsonSchema; } public void setJsonSchema(String j) { this.jsonSchema = j; }
     }
 
     public static class TechnicalSkillDTO {

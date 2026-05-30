@@ -43,6 +43,8 @@ public class UpdateJobRequest {
         private Boolean      customType;
         private List<String> options;
         private Integer      weight;
+        private String       instruction;
+        private String       jsonSchema;
     }
 
     @Data

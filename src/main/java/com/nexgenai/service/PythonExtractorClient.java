@@ -87,9 +87,11 @@ public class PythonExtractorClient {
                 List<Map<String, Object>> prereqsJson = jobPrereqs.stream()
                     .map(p -> {
                         Map<String, Object> m = new java.util.HashMap<>();
-                        m.put("type",       p.getType());
-                        m.put("value",      p.getValue());
-                        m.put("obligatory", Boolean.TRUE.equals(p.getObligatory()));
+                        m.put("type",        p.getType());
+                        m.put("value",       p.getValue());
+                        m.put("obligatory",  Boolean.TRUE.equals(p.getObligatory()));
+                        if (p.getInstruction() != null) m.put("instruction", p.getInstruction());
+                        if (p.getJsonSchema()  != null) m.put("json_schema",  p.getJsonSchema());
                         return m;
                     })
                     .collect(Collectors.toList());

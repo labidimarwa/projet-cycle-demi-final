@@ -7,8 +7,10 @@ import com.nexgenai.model.*;
 import com.nexgenai.model.enums.ContractType;
 import com.nexgenai.model.enums.ExperienceLevel;
 import com.nexgenai.model.enums.JobStatus;
+import com.nexgenai.model.enums.NotificationType;
 import com.nexgenai.repository.ApplicationRepository;
 import com.nexgenai.repository.JobRepository;
+import com.nexgenai.repository.UserRepository;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -24,22 +26,30 @@ public class JobService {
 
     private final JobRepository         jobRepository;
     private final ApplicationRepository applicationRepository;
-    private final InterviewService interviewService;
+    private final InterviewService      interviewService;
+    private final NotificationService   notificationService;
+    private final UserRepository        userRepository;
+
     @Value("${app.frontend-url:http://localhost:4200}")
     private String frontendBaseUrl;
-    public JobService(JobRepository jobRepository, ApplicationRepository applicationRepository, InterviewService interviewService) {
+
+    public JobService(JobRepository jobRepository, ApplicationRepository applicationRepository,
+                      InterviewService interviewService, NotificationService notificationService,
+                      UserRepository userRepository) {
         this.jobRepository         = jobRepository;
         this.applicationRepository = applicationRepository;
-        this.interviewService= interviewService;
-        
+        this.interviewService      = interviewService;
+        this.notificationService   = notificationService;
+        this.userRepository        = userRepository;
     }
 
     // ── CREATE ────────────────────────────────────────────────────────────────
     @Transactional
-    public JobResponse createJob(CreateJobRequest req) {
+    public JobResponse createJob(CreateJobRequest req, String createdByHrId) {
         Job job = new Job();
         applyRequestToJob(job, req);
         job.setStatus(JobStatus.DRAFT);
+        job.setCreatedByHrId(createdByHrId);
         if (req.getPrerequisites() != null) {
             req.getPrerequisites().forEach(p -> {
                 Prerequisite prereq = new Prerequisite();
@@ -51,6 +61,8 @@ public class JobService {
                 prereq.setCustomType(p.getCustomType());
                 if (p.getOptions() != null)
                     prereq.setOptions(String.join(",", p.getOptions()));
+                prereq.setInstruction(p.getInstruction());
+                prereq.setJsonSchema(p.getJsonSchema());
                 job.addPrerequisite(prereq);
             });
         }
@@ -100,6 +112,19 @@ public class JobService {
 
         Job saved = jobRepository.save(job);
         interviewService.createInterviewsForJob(saved);
+
+        // Notify admins that a new job was created
+        if (createdByHrId != null) {
+            userRepository.findAll().stream()
+                .filter(u -> u instanceof Admin)
+                .forEach(admin -> notificationService.send(
+                    admin.getId(), NotificationType.JOB_CREATED,
+                    "New Job Published",
+                    "A new job \"" + saved.getTitle() + "\" has been created.",
+                    saved.getId(), "JOB", "/hr/jobs"
+                ));
+        }
+
         return mapToResponse(saved);
     }
 
@@ -166,6 +191,8 @@ public class JobService {
                 prereq.setCustomType(p.getCustomType());
                 if (p.getOptions() != null)
                     prereq.setOptions(String.join(",", p.getOptions()));
+                prereq.setInstruction(p.getInstruction());
+                prereq.setJsonSchema(p.getJsonSchema());
                 job.addPrerequisite(prereq);
             });
         }
@@ -235,7 +262,20 @@ public class JobService {
         Job job = jobRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Job not found: " + id));
         job.setStatus(newStatus);
-        return mapToResponse(jobRepository.save(job));
+        Job saved = jobRepository.save(job);
+
+        // Notify all applicants when the job is closed
+        if (newStatus == JobStatus.CLOSED) {
+            applicationRepository.findByJobId(id).forEach(app ->
+                notificationService.send(
+                    app.getCandidateId(), NotificationType.JOB_CLOSED,
+                    "Job Closed",
+                    "The position \"" + saved.getTitle() + "\" has been closed.",
+                    id, "JOB", "/candidate/applications"
+                )
+            );
+        }
+        return mapToResponse(saved);
     }
 
     // ── DELETE ────────────────────────────────────────────────────────────────
@@ -299,6 +339,7 @@ public class JobService {
                 d.setId(p.getId()); d.setType(p.getType()); d.setValue(p.getValue());
                 d.setObligatory(p.getObligatory()); d.setIcon(p.getIcon());
                 d.setCustomType(p.getCustomType()); d.setWeight(p.getWeight());
+                d.setInstruction(p.getInstruction()); d.setJsonSchema(p.getJsonSchema());
                 if (p.getOptions() != null && !p.getOptions().isEmpty())
                     d.setOptions(List.of(p.getOptions().split(",")));
                 return d;

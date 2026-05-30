@@ -69,6 +69,8 @@ public class CreateJobRequest {
         private String       icon;
         private Boolean      customType;
         private List<String> options;
+        private String       instruction;
+        private String       jsonSchema;
     }
 
     @Data @NoArgsConstructor @AllArgsConstructor

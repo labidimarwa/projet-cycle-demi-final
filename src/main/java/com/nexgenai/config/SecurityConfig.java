@@ -80,6 +80,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.DELETE,"/job-tests/**").hasAnyRole("HR", "ADMIN")
                 .requestMatchers(HttpMethod.PATCH, "/job-tests/**").hasAnyRole("HR", "ADMIN")
 
+                // Notifications — all authenticated users
+                .requestMatchers("/notifications/**").authenticated()
+
                 // Candidate portal — authenticated candidates only
                 //.requestMatchers("/candidate/**").hasRole("CANDIDATE")
                 .requestMatchers("/api/v1/candidate/matches/*/compute").hasRole("CANDIDATE")

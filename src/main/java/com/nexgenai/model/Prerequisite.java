@@ -29,7 +29,13 @@ public class Prerequisite {
     
     @Column(columnDefinition = "TEXT")
     private String options;
-    
+
+    @Column(columnDefinition = "TEXT")
+    private String instruction;
+
+    @Column(columnDefinition = "TEXT", name = "json_schema")
+    private String jsonSchema;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "job_id")
     @JsonIgnore

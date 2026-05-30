@@ -9,6 +9,7 @@ import com.nexgenai.model.enums.ExperienceLevel;
 import com.nexgenai.model.enums.JobStatus;
 import com.nexgenai.repository.ApplicationRepository;
 import com.nexgenai.repository.JobRepository;
+import com.nexgenai.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,8 @@ class JobServiceTest {
     @Mock private JobRepository jobRepository;
     @Mock private ApplicationRepository applicationRepository;
     @Mock private InterviewService interviewService;
+    @Mock private NotificationService notificationService;
+    @Mock private UserRepository userRepository;
 
     // ── Classe testée ─────────────────────────────────────────────────────────
     @InjectMocks private JobService jobService;
@@ -80,7 +83,7 @@ class JobServiceTest {
         doNothing().when(interviewService).createInterviewsForJob(any(Job.class));
 
         // WHEN
-        JobResponse response = jobService.createJob(validRequest);
+        JobResponse response = jobService.createJob(validRequest, null);
 
         // THEN
         assertNotNull(response, "La réponse ne doit pas être null");
@@ -108,7 +111,7 @@ class JobServiceTest {
         doNothing().when(interviewService).createInterviewsForJob(any());
 
         // WHEN
-        JobResponse response = jobService.createJob(validRequest);
+        JobResponse response = jobService.createJob(validRequest, null);
 
         // THEN
         assertNotNull(response);
@@ -134,7 +137,7 @@ class JobServiceTest {
         doNothing().when(interviewService).createInterviewsForJob(any());
 
         // WHEN
-        JobResponse response = jobService.createJob(validRequest);
+        JobResponse response = jobService.createJob(validRequest, null);
 
         // THEN
         assertNotNull(response);
@@ -162,7 +165,7 @@ class JobServiceTest {
         doNothing().when(interviewService).createInterviewsForJob(any());
 
         // WHEN
-        jobService.createJob(validRequest);
+        jobService.createJob(validRequest, null);
 
         // THEN
         verify(jobRepository).save(argThat(job ->

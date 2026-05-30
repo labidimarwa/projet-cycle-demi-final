@@ -3,11 +3,13 @@ package com.nexgenai.controller;
 import com.nexgenai.dto.job.CreateJobRequest;
 import com.nexgenai.dto.job.JobResponse;
 import com.nexgenai.dto.job.UpdateJobRequest;
+import com.nexgenai.model.User;
 import com.nexgenai.model.enums.JobStatus;
 import com.nexgenai.service.JobService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,8 +28,12 @@ public class JobController {
 
     // ── CREATE ────────────────────────────────────────────────────────────────
     @PostMapping
-    public ResponseEntity<JobResponse> createJob(@Valid @RequestBody CreateJobRequest req) {
-        return new ResponseEntity<>(jobService.createJob(req), HttpStatus.CREATED);
+    public ResponseEntity<JobResponse> createJob(
+            @Valid @RequestBody CreateJobRequest req,
+            Authentication authentication) {
+        String creatorId = authentication != null
+                ? ((User) authentication.getPrincipal()).getId() : null;
+        return new ResponseEntity<>(jobService.createJob(req, creatorId), HttpStatus.CREATED);
     }
 
     // ── READ ALL ──────────────────────────────────────────────────────────────

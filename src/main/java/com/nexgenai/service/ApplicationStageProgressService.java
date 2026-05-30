@@ -5,12 +5,14 @@ package com.nexgenai.service;
 
 import com.nexgenai.model.ApplicationStageProgress;
 import com.nexgenai.model.Job;
+import com.nexgenai.model.enums.NotificationType;
 import com.nexgenai.model.enums.StageProgressStatus;
 import com.nexgenai.model.enums.StageType;
 import com.nexgenai.repository.ApplicationStageProgressRepository;
 import com.nexgenai.repository.ChatSessionRepository;
 import com.nexgenai.repository.JobMatchRepository;
 import com.nexgenai.repository.JobRepository;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,16 +26,19 @@ public class ApplicationStageProgressService {
     private final JobRepository                      jobRepo;
     private final JobMatchRepository                 jobMatchRepo;
     private final ChatSessionRepository              chatSessionRepo;
+    private final NotificationService                notificationService;
 
     public ApplicationStageProgressService(
             ApplicationStageProgressRepository progressRepo,
             JobRepository jobRepo,
             JobMatchRepository jobMatchRepo,
-            ChatSessionRepository chatSessionRepo) {
-        this.progressRepo    = progressRepo;
-        this.jobRepo         = jobRepo;
-        this.jobMatchRepo    = jobMatchRepo;
-        this.chatSessionRepo = chatSessionRepo;
+            ChatSessionRepository chatSessionRepo,
+            @Lazy NotificationService notificationService) {
+        this.progressRepo        = progressRepo;
+        this.jobRepo             = jobRepo;
+        this.jobMatchRepo        = jobMatchRepo;
+        this.chatSessionRepo     = chatSessionRepo;
+        this.notificationService = notificationService;
     }
 
     // ── READ ──────────────────────────────────────────────────────────────────
@@ -182,6 +187,38 @@ public class ApplicationStageProgressService {
         // Activate next if we just completed this one
         if (newStatus == StageProgressStatus.COMPLETED) {
             activateNextPending(rows);
+
+            // Find the newly activated stage and notify the candidate
+            rows.stream()
+                .filter(r -> r.getStageOrder() > stageOrder
+                          && r.getStatus() == StageProgressStatus.IN_PROGRESS)
+                .findFirst()
+                .ifPresent(next -> {
+                    String type = next.getStageType();
+                    if ("TECHNICAL_TEST".equals(type) || "RH_TEST".equals(type)) {
+                        notificationService.send(
+                            candidateId, NotificationType.TEST_ASSIGNED,
+                            "New Test Available",
+                            "You have a new test to complete: \"" + next.getStageName() + "\".",
+                            jobId, "JOB", "/candidate/applications"
+                        );
+                    } else if ("RH_INTERVIEW".equals(type) || "TECHNICAL_INTERVIEW".equals(type)
+                            || "ADMIN_INTERVIEW".equals(type)) {
+                        notificationService.send(
+                            candidateId, NotificationType.INTERVIEW_SCHEDULED,
+                            "Interview Stage Activated",
+                            "Your next step is an interview: \"" + next.getStageName() + "\".",
+                            jobId, "JOB", "/candidate/applications"
+                        );
+                    } else {
+                        notificationService.send(
+                            candidateId, NotificationType.STAGE_COMPLETED,
+                            "Stage Advanced",
+                            "You have been moved to the next stage: \"" + next.getStageName() + "\".",
+                            jobId, "JOB", "/candidate/applications"
+                        );
+                    }
+                });
         }
 
         return target;

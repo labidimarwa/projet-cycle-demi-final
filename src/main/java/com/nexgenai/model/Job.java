@@ -68,6 +68,10 @@ public class Job {
     @Column(name = "soft_skill_weight")
     private Integer softSkillWeight = 40;
 
+    /** ID of the HR user who created this job — used to route notifications. */
+    @Column(name = "created_by_hr_id")
+    private String createdByHrId;
+
     // ── TIMESTAMPS ────────────────────────────────────────────────────────────
 
     private LocalDateTime createdAt;
