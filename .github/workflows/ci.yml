@@ -62,8 +62,6 @@ jobs:
       # Full build + JaCoCo coverage report
       - name: Full Build + JaCoCo Coverage
         run: ./mvnw clean verify -Dspring.profiles.active=test --no-transfer-progress
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       - name: Upload JaCoCo Report
         uses: actions/upload-artifact@v4
