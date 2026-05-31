@@ -6,11 +6,14 @@ import com.nexgenai.model.*;
 import com.nexgenai.model.enums.AssessmentType;
 import com.nexgenai.model.enums.StageType;
 import com.nexgenai.repository.*;
+import com.nexgenai.security.FileSecurityValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -37,6 +40,7 @@ public class AssessmentCrudService {
     private final WorkflowStageRepository     workflowStageRepository;
 
     private final ObjectMapper objectMapper;
+    private final FileSecurityValidator fileSecurityValidator;
 
     @Value("${app.question.image-dir:uploads/questions}")
     private String imageDir;
@@ -332,6 +336,8 @@ public class AssessmentCrudService {
 
     @Transactional
     public QuestionResponse uploadQuestionImage(String questionId, MultipartFile file) throws IOException {
+        FileSecurityValidator.ValidationResult vr = fileSecurityValidator.validate(file, extractClientIp());
+        if (!vr.valid()) throw new IllegalArgumentException("Image file rejected: " + vr.reason());
         Question q = questionRepository.findById(questionId)
             .orElseThrow(() -> new RuntimeException("Question not found"));
         if (q.getImagePath() != null)
@@ -342,6 +348,20 @@ public class AssessmentCrudService {
         Files.copy(file.getInputStream(), dir.resolve(filename), StandardCopyOption.REPLACE_EXISTING);
         q.setImagePath(dir.resolve(filename).toString());
         return mapPsychometricQuestion(questionRepository.save(q));
+    }
+
+    private String extractClientIp() {
+        try {
+            ServletRequestAttributes attrs =
+                (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                var req = attrs.getRequest();
+                String xff = req.getHeader("X-Forwarded-For");
+                if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+                return req.getRemoteAddr();
+            }
+        } catch (Exception ignored) {}
+        return "unknown";
     }
 
     @Transactional

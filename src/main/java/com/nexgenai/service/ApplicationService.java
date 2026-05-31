@@ -6,10 +6,13 @@ import com.nexgenai.model.enums.NotificationType;
 import com.nexgenai.repository.ApplicationRepository;
 import com.nexgenai.repository.JobRepository;
 import com.nexgenai.repository.UserRepository;
+import com.nexgenai.security.FileSecurityValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.concurrent.CompletableFuture;
@@ -29,6 +32,7 @@ public class ApplicationService {
     private final CvMatchingService               cvMatchingService;
     private final ApplicationStageProgressService stageProgressService;
     private final FileStorageService              fileStorageService;
+    private final FileSecurityValidator           fileSecurityValidator;
     private final NotificationService             notificationService;
 
     @Transactional
@@ -49,6 +53,8 @@ public class ApplicationService {
 
         // Persist CV if provided
         if (cv != null && !cv.isEmpty()) {
+            FileSecurityValidator.ValidationResult vr = fileSecurityValidator.validate(cv, extractClientIp());
+            if (!vr.valid()) throw new IllegalArgumentException("CV file rejected: " + vr.reason());
             String cvPath = fileStorageService.saveFile(candidateEmail, cv);
             builder.cvPath(cvPath);
             candidate.setCvPath(cvPath);
@@ -109,6 +115,20 @@ public class ApplicationService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private String extractClientIp() {
+        try {
+            ServletRequestAttributes attrs =
+                (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                var req = attrs.getRequest();
+                String xff = req.getHeader("X-Forwarded-For");
+                if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+                return req.getRemoteAddr();
+            }
+        } catch (Exception ignored) {}
+        return "unknown";
+    }
 
     private Candidate findCandidate(String email) {
         return userRepository.findByEmail(email)

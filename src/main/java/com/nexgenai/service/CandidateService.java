@@ -7,10 +7,13 @@ import com.nexgenai.dto.candidate.UpdateCandidateProfileRequest;
 import com.nexgenai.model.*;
 import com.nexgenai.model.enums.AssessmentType;
 import com.nexgenai.repository.*;
+import com.nexgenai.security.FileSecurityValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.file.Path;
@@ -29,6 +32,7 @@ public class CandidateService {
     private final ApplicationRepository               applicationRepository;
     private final ApplicationStageProgressRepository  stageProgressRepository;
     private final FileStorageService                  fileStorageService;
+    private final FileSecurityValidator               fileSecurityValidator;
     private final ChatSessionRepository               chatSessionRepository;
     private final AssessmentRepository                assessmentRepository;
     private final TestSessionRepository               testSessionRepository;
@@ -63,11 +67,27 @@ public class CandidateService {
 
     @Transactional
     public String uploadCv(String email, MultipartFile file) {
+        FileSecurityValidator.ValidationResult vr = fileSecurityValidator.validate(file, extractClientIp());
+        if (!vr.valid()) throw new IllegalArgumentException("File rejected: " + vr.reason());
         Candidate c = findCandidate(email);
         String cvPath = fileStorageService.saveFile(email, file);
         c.setCvPath(cvPath);
         userRepository.save(c);
         return cvPath;
+    }
+
+    private String extractClientIp() {
+        try {
+            ServletRequestAttributes attrs =
+                (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                var req = attrs.getRequest();
+                String xff = req.getHeader("X-Forwarded-For");
+                if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+                return req.getRemoteAddr();
+            }
+        } catch (Exception ignored) {}
+        return "unknown";
     }
 
     public Path getCvFilePath(String email) {

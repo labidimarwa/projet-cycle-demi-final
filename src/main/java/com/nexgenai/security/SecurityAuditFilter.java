@@ -124,6 +124,8 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
         response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
         response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
         response.setHeader("Cache-Control", "no-store");
+        response.setHeader("Content-Security-Policy",
+            "default-src 'self'; frame-ancestors 'none'; object-src 'none'");
 
         chain.doFilter(request, response);
     }
