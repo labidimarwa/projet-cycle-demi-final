@@ -224,14 +224,22 @@ class CandidateControllerTest {
     @WithMockUser(roles = "HR")
     void setup_createJobForApplicationTests() throws Exception {
         Map<String, Object> jobReq = new HashMap<>();
-        jobReq.put("title",           "Poste Sprint1 Test");
-        jobReq.put("department",      "IT");
-        jobReq.put("location",        "Tunis");
-        jobReq.put("contractType",    ContractType.CONTRACT.name());
-        jobReq.put("experienceLevel", ExperienceLevel.MID_LEVEL.name());
-        jobReq.put("description",     "Annonce créée pour les tests de candidature Sprint 1");
-        jobReq.put("openPositions",   2);
-        jobReq.put("isRemote",        false);
+        jobReq.put("title",                "Poste Sprint1 Test");
+        jobReq.put("department",           "IT");
+        jobReq.put("location",             "Tunis");
+        jobReq.put("contractType",         ContractType.CONTRACT.name());
+        jobReq.put("experienceLevel",      ExperienceLevel.MID_LEVEL.name());
+        jobReq.put("description",          "Annonce créée pour les tests de candidature Sprint 1");
+        jobReq.put("openPositions",        2);
+        jobReq.put("isRemote",             false);
+        jobReq.put("skillsWeight",         70);
+        jobReq.put("prerequisitesWeight",  30);
+        jobReq.put("technicalSkillWeight", 60);
+        jobReq.put("softSkillWeight",      40);
+        jobReq.put("prerequisites",  java.util.List.of(
+            java.util.Map.of("type", "DEGREE", "value", "Bac+3", "obligatory", true)));
+        jobReq.put("technicalSkills", java.util.List.of(
+            java.util.Map.of("name", "Java", "obligatory", true, "skillType", "TECHNICAL")));
 
         MvcResult result = mockMvc.perform(post(JOBS_BASE)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -281,9 +289,8 @@ class CandidateControllerTest {
 
     @Test
     @Order(11)
-    @DisplayName("TC-CCTRL-11 (US-20) : POST /candidate/apply même job deux fois → 200 idempotent (pas de doublon)")
-    void apply_duplicateApplicationSameJob_returns200Idempotent() throws Exception {
-        // Deuxième postulation au même job → doit être ignorée silencieusement
+    @DisplayName("TC-CCTRL-11 (US-20) : POST /candidate/apply même job deux fois → 409 Conflict (doublon interdit)")
+    void apply_duplicateApplicationSameJob_returns409Conflict() throws Exception {
         byte[] pdfContent = {0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34, 0x0A};
         MockMultipartFile cv = new MockMultipartFile(
             "cv", "mon_cv.pdf", "application/pdf", pdfContent
@@ -293,8 +300,7 @@ class CandidateControllerTest {
                 .file(cv)
                 .param("jobId", testJobId)
                 .header("Authorization", "Bearer " + candidateToken))
-               .andExpect(status().isOk());
-        // La candidature en doublon est silencieusement ignorée par ApplicationService
+               .andExpect(status().isConflict());
     }
 
     @Test

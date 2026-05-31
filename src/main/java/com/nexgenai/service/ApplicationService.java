@@ -41,10 +41,8 @@ public class ApplicationService {
 
         Candidate candidate = findCandidate(candidateEmail);
 
-        // Idempotent: ignore duplicate applications
         if (applicationRepository.existsByCandidateIdAndJobId(candidate.getId(), jobId)) {
-            log.info("⚠️  Duplicate application ignored: {} → {}", candidateEmail, jobId);
-            return;
+            throw new IllegalStateException("Vous avez déjà postulé à cette offre.");
         }
 
         Application.ApplicationBuilder builder = Application.builder()
