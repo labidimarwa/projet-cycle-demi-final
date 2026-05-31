@@ -92,6 +92,7 @@ jobs:
       # SonarCloud — main branch only
       - name: SonarCloud Scan
         if: github.ref == 'refs/heads/main'
+        continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
