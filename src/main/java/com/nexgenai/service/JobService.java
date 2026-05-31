@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,18 +30,20 @@ public class JobService {
     private final InterviewService      interviewService;
     private final NotificationService   notificationService;
     private final UserRepository        userRepository;
+    private final PythonExtractorClient pythonClient;
 
     @Value("${app.frontend-url:http://localhost:4200}")
     private String frontendBaseUrl;
 
     public JobService(JobRepository jobRepository, ApplicationRepository applicationRepository,
                       InterviewService interviewService, NotificationService notificationService,
-                      UserRepository userRepository) {
+                      UserRepository userRepository, PythonExtractorClient pythonClient) {
         this.jobRepository         = jobRepository;
         this.applicationRepository = applicationRepository;
         this.interviewService      = interviewService;
         this.notificationService   = notificationService;
         this.userRepository        = userRepository;
+        this.pythonClient          = pythonClient;
     }
 
     // ── CREATE ────────────────────────────────────────────────────────────────
@@ -112,6 +115,16 @@ public class JobService {
 
         Job saved = jobRepository.save(job);
         interviewService.createInterviewsForJob(saved);
+
+        // Pre-compute job embeddings in Python asynchronously (once, reused per candidate)
+        final String savedId = saved.getId();
+        final List<TechnicalSkill> savedSkills = saved.getTechnicalSkills() != null
+            ? List.copyOf(saved.getTechnicalSkills()) : List.of();
+        final List<Prerequisite> savedPrereqs = saved.getPrerequisites() != null
+            ? List.copyOf(saved.getPrerequisites()) : List.of();
+        CompletableFuture.runAsync(() ->
+            pythonClient.indexJob(savedId, savedSkills, savedPrereqs)
+        );
 
         // Notify admins that a new job was created
         if (createdByHrId != null) {
@@ -247,10 +260,21 @@ public class JobService {
         Job saved = jobRepository.save(job);
 
         // Recréer les interviews si le workflow ou les assessments ont changé
-        // (même logique que createJob — on repart de zéro pour éviter les doublons)
         if (interviewsNeedRebuild) {
-            interviewService.deleteInterviewsForJob(saved);   // ← à implémenter si pas déjà là
+            interviewService.deleteInterviewsForJob(saved);
             interviewService.createInterviewsForJob(saved);
+        }
+
+        // Re-index job embeddings in Python if skills or prerequisites changed
+        if (req.getTechnicalSkills() != null || req.getPrerequisites() != null) {
+            final String savedId = saved.getId();
+            final List<TechnicalSkill> savedSkills = saved.getTechnicalSkills() != null
+                ? List.copyOf(saved.getTechnicalSkills()) : List.of();
+            final List<Prerequisite> savedPrereqs = saved.getPrerequisites() != null
+                ? List.copyOf(saved.getPrerequisites()) : List.of();
+            CompletableFuture.runAsync(() ->
+                pythonClient.indexJob(savedId, savedSkills, savedPrereqs)
+            );
         }
 
         return mapToResponse(saved);
@@ -284,6 +308,7 @@ public class JobService {
         if (!jobRepository.existsById(id))
             throw new RuntimeException("Job not found: " + id);
         jobRepository.deleteById(id);
+        CompletableFuture.runAsync(() -> pythonClient.deleteJobIndex(id));
     }
 
     // ── FULL UPDATE (kept for backward compat) ────────────────────────────────

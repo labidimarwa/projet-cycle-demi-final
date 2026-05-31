@@ -151,9 +151,10 @@ public class CvMatchingService {
             .collect(Collectors.toList());
 
         // ── 2. Python : MiniLM (skills) + RAG+Qwen (prérequis) ───────────────
+        // jobId passed so Python can reuse pre-indexed job embeddings (computed at job creation)
         CvExtractionResult extraction = pythonClient.extraireCv(
-        	    cvBytes, cvFilename, jobAvecPrereqs.getPrerequisites(), skillsMaps
-        	);
+                cvBytes, cvFilename, jobAvecPrereqs.getPrerequisites(), skillsMaps, jobId
+        );
 
         	// ← AJOUTE ICI
         	log.info("📥 Raw extraction reçue — skillsEvalues={} prerequisEvalues={}",

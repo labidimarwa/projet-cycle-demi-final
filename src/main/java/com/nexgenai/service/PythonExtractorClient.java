@@ -7,6 +7,7 @@ import com.nexgenai.dto.matching.EmbedResult;
 import com.nexgenai.dto.matching.EscoNormalizationRequest;
 import com.nexgenai.dto.matching.EscoNormalizationResult;
 import com.nexgenai.model.Prerequisite;
+import com.nexgenai.model.TechnicalSkill;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -71,7 +72,8 @@ public class PythonExtractorClient {
      */
     public CvExtractionResult extraireCv(byte[] cvBytes, String filename,
                                          List<Prerequisite> jobPrereqs,
-                                         List<Map<String, Object>> jobSkills) {
+                                         List<Map<String, Object>> jobSkills,
+                                         String jobId) {
         MultipartBodyBuilder form = new MultipartBodyBuilder();
         form.part("fichier", new ByteArrayResource(cvBytes) {
             @Override
@@ -107,6 +109,10 @@ public class PythonExtractorClient {
             } catch (Exception e) {
                 log.warn("⚠️ Impossible de sérialiser les skills job : {}", e.getMessage());
             }
+        }
+
+        if (jobId != null && !jobId.isBlank()) {
+            form.part("job_id", jobId);
         }
 
         try {
@@ -249,6 +255,67 @@ public class PythonExtractorClient {
         } catch (Exception e) {
             log.debug("ESCO suggest indisponible pour '{}' : {}", query, e.getMessage());
             return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Pré-calcule les embeddings MiniLM pour les skills et prérequis d'un job.
+     * Appelé une seule fois à la création ou modification du job (fire-and-forget).
+     * Si Python est indisponible, logue un warning sans lever d'exception.
+     */
+    public void indexJob(String jobId, List<TechnicalSkill> skills, List<Prerequisite> prerequisites) {
+        try {
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("job_id", jobId);
+            body.put("skills", skills == null ? List.of() : skills.stream()
+                .filter(s -> s.getName() != null)
+                .map(s -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("nom",  s.getName());
+                    m.put("type", s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+                    return m;
+                })
+                .collect(Collectors.toList()));
+            body.put("prerequisites", prerequisites == null ? List.of() : prerequisites.stream()
+                .filter(p -> p.getValue() != null)
+                .map(p -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("type",  p.getType());
+                    m.put("value", p.getValue());
+                    return m;
+                })
+                .collect(Collectors.toList()));
+
+            webClient.post()
+                .uri("/index-job")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(30))
+                .block();
+
+            log.info("✅ Job {} indexé dans le cache Python", jobId);
+        } catch (Exception e) {
+            log.warn("⚠️ Impossible d'indexer le job {} dans Python (non bloquant) : {}", jobId, e.getMessage());
+        }
+    }
+
+    /**
+     * Supprime les embeddings d'un job du cache Python.
+     * Appelé à la suppression du job (fire-and-forget).
+     */
+    public void deleteJobIndex(String jobId) {
+        try {
+            webClient.delete()
+                .uri("/index-job/" + jobId)
+                .retrieve()
+                .bodyToMono(Void.class)
+                .timeout(Duration.ofSeconds(5))
+                .block();
+            log.info("🗑️ Job {} supprimé du cache Python", jobId);
+        } catch (Exception e) {
+            log.warn("⚠️ Impossible de supprimer le job {} du cache Python : {}", jobId, e.getMessage());
         }
     }
 
