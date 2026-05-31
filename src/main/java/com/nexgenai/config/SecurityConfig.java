@@ -17,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -36,6 +37,16 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
         http
+            // OWASP Secure Headers (complète les defaults Spring Security)
+            .headers(headers -> {
+                headers.referrerPolicy(rp -> rp.policy(
+                    ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN));
+                headers.permissionsPolicy(pp -> pp.policy(
+                    "camera=(), microphone=(), geolocation=()"));
+                headers.contentSecurityPolicy(csp -> csp.policyDirectives(
+                    "default-src 'self'; frame-ancestors 'none'; object-src 'none'"));
+            })
+
             // Désactiver CSRF (API REST stateless)
             .csrf(csrf -> csrf.disable())
 
