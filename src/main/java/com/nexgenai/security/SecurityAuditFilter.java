@@ -96,7 +96,7 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
                 AttackType type = classify(val);
                 if (type != AttackType.NONE) {
                     log(type, ip, method, url, "param:" + e.getKey(), val, eventLogger);
-                    if (type == AttackType.XSS || type == AttackType.CMD) {
+                    if (type == AttackType.XSS || type == AttackType.SQLI || type == AttackType.CMD) {
                         sendError(response, 400, "Bad Request");
                         return;
                     }
