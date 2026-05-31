@@ -6,23 +6,21 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    # Run every Monday at 06:00 UTC for proactive CVE scanning
+    # Every Monday at 06:00 UTC — proactive CVE scan
     - cron: '0 6 * * 1'
 
 jobs:
 
   # =========================================================
-  # 1. SECURITY UNIT & INTEGRATION TESTS
+  # 1. SECURITY INTEGRATION TESTS
   # =========================================================
   security-tests:
-    name: Security Tests (XSS / SQLI / RBAC / File / JWT / Rate-Limit)
+    name: Security Tests (XSS / SQLi / RBAC / FileUpload / Headers)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -34,12 +32,12 @@ jobs:
       - name: Grant execute permission
         run: chmod +x mvnw
 
-      - name: Run security tests
+      - name: Run SecurityIntegrationTest (20 tests)
         run: |
           ./mvnw test \
             -Dspring.profiles.active=test \
-            -Dtest="SecurityAuditFilterTest,RateLimitingFilterTest,FileSecurityValidatorTest,RbacSecurityTest,JwtSecurityTest,SecurityEventLoggerTest" \
-            -DfailIfNoTests=false \
+            -Dtest=SecurityIntegrationTest \
+            -DfailIfNoTests=true \
             --no-transfer-progress
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -56,9 +54,8 @@ jobs:
   # 2. OWASP DEPENDENCY-CHECK (CVE scan)
   # =========================================================
   dependency-check:
-    name: OWASP Dependency-Check (CVE ≥ 7 fails build)
+    name: OWASP Dependency-Check (CVE >= 7 fails build)
     runs-on: ubuntu-latest
-    # Only run on push to main/develop and on schedule — not every PR to avoid NVD API quota
     if: github.event_name != 'pull_request'
 
     steps:
@@ -92,24 +89,8 @@ jobs:
           path: target/dependency-check-report/
           retention-days: 90
 
-      - name: Post CVE summary to job summary
-        if: always()
-        run: |
-          if [ -f target/dependency-check-report/dependency-check-report.json ]; then
-            CRITICAL=$(cat target/dependency-check-report/dependency-check-report.json \
-              | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          deps = data.get('dependencies', [])
-          count = sum(1 for d in deps for v in d.get('vulnerabilities', []) if v.get('cvssv3', {}).get('baseScore', 0) >= 9)
-          print(count)
-              " 2>/dev/null || echo "?")
-            echo "## OWASP Dependency-Check" >> $GITHUB_STEP_SUMMARY
-            echo "Critical CVEs (score ≥ 9): **$CRITICAL**" >> $GITHUB_STEP_SUMMARY
-          fi
-
   # =========================================================
-  # 3. STATIC ANALYSIS — SECRET DETECTION
+  # 3. SECRET DETECTION — Gitleaks
   # =========================================================
   secret-detection:
     name: Secret Detection (Gitleaks)
@@ -125,10 +106,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # uncomment for org repos
 
   # =========================================================
-  # 4. OWASP ZAP DAST (Dynamic Analysis — only on main)
+  # 4. OWASP ZAP DAST (main push only)
   # =========================================================
   zap-scan:
     name: OWASP ZAP DAST Scan
@@ -154,8 +134,8 @@ jobs:
           ./mvnw spring-boot:run \
             -Dspring.profiles.active=test \
             -Dspring-boot.run.jvmArguments="-Dserver.port=8080" &
-          # Wait for application to start
-          timeout 90 bash -c 'until curl -sf http://localhost:8080/api/v1/actuator/health 2>/dev/null || curl -sf http://localhost:8080/api/v1/jobs 2>/dev/null; do sleep 3; done'
+          timeout 90 bash -c \
+            'until curl -sf http://localhost:8080/api/v1/jobs 2>/dev/null; do sleep 3; done'
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
@@ -164,7 +144,7 @@ jobs:
         with:
           target: 'http://localhost:8080/api/v1'
           rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-I'   # -I = do not fail on warnings, only on FAIL rules
+          cmd_options: '-I'
           artifact_name: zap-baseline-report
           allow_issue_writing: false
 
