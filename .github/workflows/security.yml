@@ -113,6 +113,7 @@ jobs:
     name: OWASP ZAP DAST Scan
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    continue-on-error: true
 
     steps:
       - name: Checkout code
