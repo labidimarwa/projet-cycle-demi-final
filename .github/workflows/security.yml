@@ -39,8 +39,6 @@ jobs:
             -Dtest=SecurityIntegrationTest \
             -DfailIfNoTests=true \
             --no-transfer-progress
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       - name: Upload security test results
         uses: actions/upload-artifact@v4

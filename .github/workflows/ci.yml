@@ -40,8 +40,6 @@ jobs:
             -Dspring.profiles.active=test \
             -DfailIfNoTests=true \
             --no-transfer-progress
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       # Sprint 1 — CandidateController (US-14, US-15, US-20)
       - name: Sprint 1 — CandidateController Tests (13 tests)
@@ -51,8 +49,6 @@ jobs:
             -Dspring.profiles.active=test \
             -DfailIfNoTests=true \
             --no-transfer-progress
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       # Security — XSS / SQLi / RBAC / FileUpload / Headers
       - name: Security Integration Tests (20 tests)
@@ -62,8 +58,6 @@ jobs:
             -Dspring.profiles.active=test \
             -DfailIfNoTests=true \
             --no-transfer-progress
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       # Full build + JaCoCo coverage report
       - name: Full Build + JaCoCo Coverage
