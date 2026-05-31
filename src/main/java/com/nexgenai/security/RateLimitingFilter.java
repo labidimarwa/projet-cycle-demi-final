@@ -3,6 +3,7 @@ package com.nexgenai.security;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 @Order(2)
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "app.rate-limit.enabled", havingValue = "true", matchIfMissing = true)
 public class RateLimitingFilter extends OncePerRequestFilter {
 
     private final SecurityEventLogger eventLogger;
