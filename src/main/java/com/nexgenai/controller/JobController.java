@@ -31,8 +31,11 @@ public class JobController {
     public ResponseEntity<JobResponse> createJob(
             @Valid @RequestBody CreateJobRequest req,
             Authentication authentication) {
-        String creatorId = authentication != null
-                ? ((User) authentication.getPrincipal()).getId() : null;
+        String creatorId = null;
+        if (authentication != null) {
+            Object principal = authentication.getPrincipal();
+            creatorId = (principal instanceof User u) ? u.getId() : authentication.getName();
+        }
         return new ResponseEntity<>(jobService.createJob(req, creatorId), HttpStatus.CREATED);
     }
 
