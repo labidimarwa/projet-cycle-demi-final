@@ -1,4 +1,4 @@
-﻿package com.nexgenai.service;
+package com.nexgenai.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.dto.matching.CvExtractionResult;
