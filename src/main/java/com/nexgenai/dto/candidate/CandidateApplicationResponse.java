@@ -33,10 +33,6 @@ public class CandidateApplicationResponse {
     private Integer matchScore;
     private Boolean matchComputed;
 
-    // ── Chat / Interview ──────────────────────────────────────────────────────
-    private Boolean chatDone;
-    private Integer chatScore;
-
     // ── Technical tests ───────────────────────────────────────────────────────
     @Builder.Default
     private List<JobTestInfo> tests = new ArrayList<>();

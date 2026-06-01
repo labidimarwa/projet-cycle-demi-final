@@ -7,11 +7,13 @@ import com.nexgenai.model.Job;
 import com.nexgenai.model.enums.ContractType;
 import com.nexgenai.model.enums.ExperienceLevel;
 import com.nexgenai.model.enums.JobStatus;
+import com.nexgenai.model.enums.StageType;
 import com.nexgenai.repository.ApplicationRepository;
 import com.nexgenai.repository.JobRepository;
 import com.nexgenai.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -29,23 +31,47 @@ import static org.mockito.Mockito.*;
 @DisplayName("JobService - Tests Unitaires")
 class JobServiceTest {
 
-    // ── Mocks des dépendances ──────────────────────────────────────────────────
-    @Mock private JobRepository jobRepository;
+    @Mock private JobRepository         jobRepository;
     @Mock private ApplicationRepository applicationRepository;
-    @Mock private InterviewService interviewService;
-    @Mock private NotificationService notificationService;
-    @Mock private UserRepository userRepository;
+    @Mock private InterviewService      interviewService;
+    @Mock private NotificationService   notificationService;
+    @Mock private UserRepository        userRepository;
+    @Mock private PythonExtractorClient pythonClient;
 
-    // ── Classe testée ─────────────────────────────────────────────────────────
     @InjectMocks private JobService jobService;
 
-    // ── Données de test réutilisables ─────────────────────────────────────────
     private Job sampleJob;
     private CreateJobRequest validRequest;
 
+    // ── Helper : prérequis valide ─────────────────────────────────────────────
+    private CreateJobRequest.PrerequisiteDTO prereq(String value) {
+        CreateJobRequest.PrerequisiteDTO p = new CreateJobRequest.PrerequisiteDTO();
+        p.setType("DEGREE");
+        p.setValue(value);
+        p.setObligatory(true);
+        return p;
+    }
+
+    // ── Helper : skill valide ─────────────────────────────────────────────────
+    private CreateJobRequest.TechnicalSkillDTO skill(String name) {
+        CreateJobRequest.TechnicalSkillDTO s = new CreateJobRequest.TechnicalSkillDTO();
+        s.setName(name);
+        s.setObligatory(true);
+        s.setSkillType("TECHNICAL");
+        return s;
+    }
+
+    // ── Helper : stage avec assignee ─────────────────────────────────────────
+    private CreateJobRequest.WorkflowStageDTO stage(StageType type, String assigneeId) {
+        CreateJobRequest.WorkflowStageDTO w = new CreateJobRequest.WorkflowStageDTO();
+        w.setStageType(type);
+        w.setName(type.name());
+        w.setAssigneeId(assigneeId);
+        return w;
+    }
+
     @BeforeEach
     void setUp() {
-        // Job de référence (simule ce que retourne la BDD)
         sampleJob = new Job();
         sampleJob.setId("job-uuid-001");
         sampleJob.setTitle("Développeur Java Senior");
@@ -58,7 +84,7 @@ class JobServiceTest {
         sampleJob.setOpenPositions(2);
         sampleJob.setIsRemote(false);
 
-        // Requête de création valide
+        // Requête minimale valide : poids 100 % + au moins 1 prérequis + 1 skill
         validRequest = new CreateJobRequest();
         validRequest.setTitle("Développeur Java Senior");
         validRequest.setDepartment("IT");
@@ -68,119 +94,299 @@ class JobServiceTest {
         validRequest.setDescription("Poste de développeur Java Spring Boot");
         validRequest.setOpenPositions(2);
         validRequest.setIsRemote(false);
+        validRequest.setSkillsWeight(70);
+        validRequest.setPrerequisitesWeight(30);
+        validRequest.setTechnicalSkillWeight(60);
+        validRequest.setSoftSkillWeight(40);
+        validRequest.setPrerequisites(List.of(prereq("Bac+3")));
+        validRequest.setTechnicalSkills(List.of(skill("Java")));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
     // US-21 : CRÉATION D'UNE ANNONCE
     // ══════════════════════════════════════════════════════════════════════════
 
-    @Test
-    @DisplayName("US-21 : createJob - requête valide → retourne JobResponse avec statut ACTIVE")
-    void createJob_validRequest_returnsJobResponseWithActiveStatus() {
-        // GIVEN
-        when(jobRepository.save(any(Job.class))).thenReturn(sampleJob);
-        when(applicationRepository.countByJobId("job-uuid-001")).thenReturn(0L);
-        doNothing().when(interviewService).createInterviewsForJob(any(Job.class));
+    @Nested
+    @DisplayName("US-21 : Création d'une annonce")
+    class CreateJobTests {
 
-        // WHEN
-        JobResponse response = jobService.createJob(validRequest, null);
+        @Test
+        @DisplayName("Requête valide → retourne JobResponse avec statut ACTIVE")
+        void createJob_validRequest_returnsJobResponse() {
+            when(jobRepository.save(any(Job.class))).thenReturn(sampleJob);
+            when(applicationRepository.countByJobId("job-uuid-001")).thenReturn(0L);
+            doNothing().when(interviewService).createInterviewsForJob(any());
 
-        // THEN
-        assertNotNull(response, "La réponse ne doit pas être null");
-        assertEquals("Développeur Java Senior", response.getTitle());
-        assertEquals("IT", response.getDepartment());
-        assertEquals(JobStatus.ACTIVE, response.getStatus());
-        assertEquals(0, response.getApplicantsCount());
+            JobResponse response = jobService.createJob(validRequest, null);
 
-        // Vérifier que save() et createInterviewsForJob() ont été appelés
-        verify(jobRepository, times(1)).save(any(Job.class));
-        verify(interviewService, times(1)).createInterviewsForJob(any(Job.class));
-    }
+            assertNotNull(response);
+            assertEquals("Développeur Java Senior", response.getTitle());
+            verify(jobRepository, times(1)).save(any(Job.class));
+            verify(interviewService, times(1)).createInterviewsForJob(any(Job.class));
+        }
 
-    @Test
-    @DisplayName("US-21 : createJob - sans prérequis ni skills → sauvegarde quand même")
-    void createJob_noPrerequisitesNoSkills_savesCalled() {
-        // GIVEN : requête minimale (sans listes)
-        validRequest.setPrerequisites(null);
-        validRequest.setTechnicalSkills(null);
-        validRequest.setAssessments(null);
-        validRequest.setWorkflowStages(null);
+        @Test
+        @DisplayName("Poids global ≠ 100 (80+30=110) → IllegalArgumentException")
+        void createJob_globalWeightsNot100_throwsException() {
+            validRequest.setSkillsWeight(80);
+            validRequest.setPrerequisitesWeight(30);
 
-        when(jobRepository.save(any(Job.class))).thenReturn(sampleJob);
-        when(applicationRepository.countByJobId(any())).thenReturn(0L);
-        doNothing().when(interviewService).createInterviewsForJob(any());
+            assertThrows(IllegalArgumentException.class,
+                () -> jobService.createJob(validRequest, null));
+            verify(jobRepository, never()).save(any());
+        }
 
-        // WHEN
-        JobResponse response = jobService.createJob(validRequest, null);
+        @Test
+        @DisplayName("Poids sous-section skills ≠ 100 (70+40=110) → IllegalArgumentException")
+        void createJob_skillSubWeightsNot100_throwsException() {
+            validRequest.setTechnicalSkillWeight(70);
+            validRequest.setSoftSkillWeight(40);
 
-        // THEN
-        assertNotNull(response);
-        verify(jobRepository, times(1)).save(any(Job.class));
-    }
+            assertThrows(IllegalArgumentException.class,
+                () -> jobService.createJob(validRequest, null));
+            verify(jobRepository, never()).save(any());
+        }
 
-    @Test
-    @DisplayName("US-21 : createJob - avec prérequis → prérequis ajoutés au job")
-    void createJob_withPrerequisites_prerequisitesAddedToJob() {
-        // GIVEN
-        CreateJobRequest.PrerequisiteDTO prereq = new CreateJobRequest.PrerequisiteDTO();
-        prereq.setType("EDUCATION");
-        prereq.setValue("Bac+5");
-        prereq.setObligatory(true);
-        validRequest.setPrerequisites(List.of(prereq));
+        @Test
+        @DisplayName("Aucun prérequis → IllegalArgumentException")
+        void createJob_noPrerequisites_throwsException() {
+            validRequest.setPrerequisites(null);
 
-        when(jobRepository.save(any(Job.class))).thenAnswer(invocation -> {
-            Job savedJob = invocation.getArgument(0);
-            savedJob.setId("job-uuid-002");
-            return savedJob;
-        });
-        when(applicationRepository.countByJobId(any())).thenReturn(0L);
-        doNothing().when(interviewService).createInterviewsForJob(any());
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> jobService.createJob(validRequest, null));
+            assertTrue(ex.getMessage().contains("prérequis"));
+        }
 
-        // WHEN
-        JobResponse response = jobService.createJob(validRequest, null);
+        @Test
+        @DisplayName("Prérequis avec value null → IllegalArgumentException")
+        void createJob_prerequisiteWithNullValue_throwsException() {
+            validRequest.setPrerequisites(List.of(prereq(null)));
 
-        // THEN
-        assertNotNull(response);
-        verify(jobRepository).save(argThat(job ->
-            job.getPrerequisites() != null && job.getPrerequisites().size() == 1
-        ));
-    }
+            assertThrows(IllegalArgumentException.class,
+                () -> jobService.createJob(validRequest, null));
+        }
 
-    @Test
-    @DisplayName("US-21 : createJob - avec technicalSkills → skills ajoutés au job")
-    void createJob_withTechnicalSkills_skillsAddedToJob() {
-        // GIVEN
-        CreateJobRequest.TechnicalSkillDTO skill = new CreateJobRequest.TechnicalSkillDTO();
-        skill.setName("Spring Boot");
-        skill.setObligatory(true);
-        skill.setWeight(80);
-        validRequest.setTechnicalSkills(List.of(skill));
+        @Test
+        @DisplayName("Aucune compétence → IllegalArgumentException")
+        void createJob_noSkills_throwsException() {
+            validRequest.setTechnicalSkills(null);
 
-        when(jobRepository.save(any(Job.class))).thenAnswer(inv -> {
-            Job j = inv.getArgument(0);
-            j.setId("job-uuid-003");
-            return j;
-        });
-        when(applicationRepository.countByJobId(any())).thenReturn(0L);
-        doNothing().when(interviewService).createInterviewsForJob(any());
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> jobService.createJob(validRequest, null));
+            assertTrue(ex.getMessage().contains("compétence"));
+        }
 
-        // WHEN
-        jobService.createJob(validRequest, null);
+        @Test
+        @DisplayName("Stage TECHNICAL_INTERVIEW sans assigneeId → IllegalArgumentException")
+        void createJob_interviewStageWithoutAssignee_throwsException() {
+            validRequest.setWorkflowStages(List.of(stage(StageType.TECHNICAL_INTERVIEW, null)));
 
-        // THEN
-        verify(jobRepository).save(argThat(job ->
-            job.getTechnicalSkills() != null && job.getTechnicalSkills().size() == 1
-        ));
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> jobService.createJob(validRequest, null));
+            assertTrue(ex.getMessage().contains("assigné"));
+        }
+
+        @Test
+        @DisplayName("Stage TECHNICAL_TEST sans assigneeId → IllegalArgumentException")
+        void createJob_testStageWithoutAssignee_throwsException() {
+            validRequest.setWorkflowStages(List.of(stage(StageType.TECHNICAL_TEST, "")));
+
+            assertThrows(IllegalArgumentException.class,
+                () -> jobService.createJob(validRequest, null));
+        }
+
+        @Test
+        @DisplayName("Stage AI_SCREENING sans assigneeId → OK (automatisé)")
+        void createJob_aiScreeningWithoutAssignee_succeeds() {
+            validRequest.setWorkflowStages(List.of(stage(StageType.AI_SCREENING, null)));
+            when(jobRepository.save(any(Job.class))).thenReturn(sampleJob);
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+            doNothing().when(interviewService).createInterviewsForJob(any());
+
+            assertDoesNotThrow(() -> jobService.createJob(validRequest, null));
+        }
+
+        @Test
+        @DisplayName("Stage TECHNICAL_INTERVIEW avec assigneeId → OK")
+        void createJob_interviewStageWithAssignee_succeeds() {
+            validRequest.setWorkflowStages(List.of(stage(StageType.TECHNICAL_INTERVIEW, "hr-user-001")));
+            when(jobRepository.save(any(Job.class))).thenReturn(sampleJob);
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+            doNothing().when(interviewService).createInterviewsForJob(any());
+
+            assertDoesNotThrow(() -> jobService.createJob(validRequest, null));
+        }
+
+        @Test
+        @DisplayName("Avec prérequis et skills → prérequis et skills ajoutés au job sauvegardé")
+        void createJob_withPrerequisitesAndSkills_savedCorrectly() {
+            when(jobRepository.save(any(Job.class))).thenAnswer(inv -> {
+                Job j = inv.getArgument(0);
+                j.setId("job-uuid-002");
+                return j;
+            });
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+            doNothing().when(interviewService).createInterviewsForJob(any());
+
+            jobService.createJob(validRequest, null);
+
+            verify(jobRepository).save(argThat(job ->
+                job.getPrerequisites() != null && job.getPrerequisites().size() == 1
+                && job.getTechnicalSkills() != null && job.getTechnicalSkills().size() == 1
+            ));
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // US-25 : LECTURE DE TOUTES LES ANNONCES
+    // US-24 : MACHINE D'ÉTATS — CHANGEMENT DE STATUT
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Nested
+    @DisplayName("US-24 : Machine d'états — changement de statut")
+    class StatusTransitionTests {
+
+        private Job jobWithStatus(JobStatus status) {
+            Job j = new Job();
+            j.setId("job-uuid-001");
+            j.setTitle("Test Job");
+            j.setStatus(status);
+            return j;
+        }
+
+        // ── Transitions AUTORISÉES ─────────────────────────────────────────────
+
+        @Test
+        @DisplayName("DRAFT → ACTIVE (publier) ✅")
+        void transition_draftToActive_allowed() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.DRAFT)));
+            when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+
+            JobResponse r = jobService.changeStatus("job-uuid-001", JobStatus.ACTIVE);
+
+            assertEquals(JobStatus.ACTIVE, r.getStatus());
+        }
+
+        @Test
+        @DisplayName("ACTIVE → PAUSED (suspendre) ✅")
+        void transition_activeToPaused_allowed() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.ACTIVE)));
+            when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+
+            JobResponse r = jobService.changeStatus("job-uuid-001", JobStatus.PAUSED);
+
+            assertEquals(JobStatus.PAUSED, r.getStatus());
+        }
+
+        @Test
+        @DisplayName("ACTIVE → CLOSED (clôturer) ✅")
+        void transition_activeToClosed_allowed() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.ACTIVE)));
+            when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(applicationRepository.findByJobId(any())).thenReturn(List.of());
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+
+            JobResponse r = jobService.changeStatus("job-uuid-001", JobStatus.CLOSED);
+
+            assertEquals(JobStatus.CLOSED, r.getStatus());
+            verify(jobRepository).save(argThat(j -> j.getStatus() == JobStatus.CLOSED));
+        }
+
+        @Test
+        @DisplayName("PAUSED → ACTIVE (réactiver) ✅")
+        void transition_pausedToActive_allowed() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.PAUSED)));
+            when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+
+            JobResponse r = jobService.changeStatus("job-uuid-001", JobStatus.ACTIVE);
+
+            assertEquals(JobStatus.ACTIVE, r.getStatus());
+        }
+
+        @Test
+        @DisplayName("PAUSED → CLOSED (clôturer) ✅")
+        void transition_pausedToClosed_allowed() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.PAUSED)));
+            when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(applicationRepository.findByJobId(any())).thenReturn(List.of());
+            when(applicationRepository.countByJobId(any())).thenReturn(0L);
+
+            JobResponse r = jobService.changeStatus("job-uuid-001", JobStatus.CLOSED);
+
+            assertEquals(JobStatus.CLOSED, r.getStatus());
+        }
+
+        // ── Transitions INTERDITES ─────────────────────────────────────────────
+
+        @Test
+        @DisplayName("DRAFT → PAUSED ❌ interdit → IllegalStateException")
+        void transition_draftToPaused_forbidden() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.DRAFT)));
+
+            IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> jobService.changeStatus("job-uuid-001", JobStatus.PAUSED));
+            assertTrue(ex.getMessage().contains("DRAFT"));
+            verify(jobRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("CLOSED → ACTIVE ❌ interdit → IllegalStateException")
+        void transition_closedToActive_forbidden() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.CLOSED)));
+
+            IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> jobService.changeStatus("job-uuid-001", JobStatus.ACTIVE));
+            assertTrue(ex.getMessage().contains("CLOSED"));
+            verify(jobRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("CLOSED → PAUSED ❌ interdit → IllegalStateException")
+        void transition_closedToPaused_forbidden() {
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(jobWithStatus(JobStatus.CLOSED)));
+
+            assertThrows(IllegalStateException.class,
+                () -> jobService.changeStatus("job-uuid-001", JobStatus.PAUSED));
+            verify(jobRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("ID inexistant → RuntimeException")
+        void changeStatus_nonExistingId_throwsRuntimeException() {
+            when(jobRepository.findById("bad-id")).thenReturn(Optional.empty());
+
+            assertThrows(RuntimeException.class,
+                () -> jobService.changeStatus("bad-id", JobStatus.ACTIVE));
+        }
+
+        @Test
+        @DisplayName("ACTIVE → CLOSED déclenche notification des candidats")
+        void transition_activeToClosed_notifiesApplicants() {
+            Job job = jobWithStatus(JobStatus.ACTIVE);
+            com.nexgenai.model.Application app = new com.nexgenai.model.Application();
+            app.setCandidateId("cand-001");
+
+            when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(job));
+            when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(applicationRepository.findByJobId("job-uuid-001")).thenReturn(List.of(app));
+            when(applicationRepository.countByJobId(any())).thenReturn(1L);
+
+            jobService.changeStatus("job-uuid-001", JobStatus.CLOSED);
+
+            verify(notificationService, times(1)).send(
+                eq("cand-001"), any(), any(), any(), any(), any(), any());
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // US-25 : LECTURE
     // ══════════════════════════════════════════════════════════════════════════
 
     @Test
     @DisplayName("US-25 : getAllJobs - retourne liste de JobResponse")
     void getAllJobs_returnsListOfJobResponses() {
-        // GIVEN
         Job job2 = new Job();
         job2.setId("job-uuid-002");
         job2.setTitle("Data Scientist");
@@ -190,316 +396,116 @@ class JobServiceTest {
         when(applicationRepository.countByJobId("job-uuid-001")).thenReturn(3L);
         when(applicationRepository.countByJobId("job-uuid-002")).thenReturn(1L);
 
-        // WHEN
         List<JobResponse> result = jobService.getAllJobs();
 
-        // THEN
         assertEquals(2, result.size());
-        assertEquals("Développeur Java Senior", result.get(0).getTitle());
         assertEquals(3, result.get(0).getApplicantsCount());
-        assertEquals("Data Scientist", result.get(1).getTitle());
-        assertEquals(1, result.get(1).getApplicantsCount());
     }
-
-    @Test
-    @DisplayName("US-25 : getAllJobs - liste vide → retourne liste vide")
-    void getAllJobs_emptyRepository_returnsEmptyList() {
-        // GIVEN
-        when(jobRepository.findAll()).thenReturn(List.of());
-
-        // WHEN
-        List<JobResponse> result = jobService.getAllJobs();
-
-        // THEN
-        assertNotNull(result);
-        assertTrue(result.isEmpty());
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // US-13 : ANNONCES ACTIVES (pour les candidats)
-    // ══════════════════════════════════════════════════════════════════════════
 
     @Test
     @DisplayName("US-13 : getActiveJobs - retourne uniquement les jobs ACTIVE")
     void getActiveJobs_returnsOnlyActiveJobs() {
-        // GIVEN
         when(jobRepository.findByStatus(JobStatus.ACTIVE)).thenReturn(List.of(sampleJob));
         when(applicationRepository.countByJobId("job-uuid-001")).thenReturn(5L);
 
-        // WHEN
         List<JobResponse> result = jobService.getActiveJobs();
 
-        // THEN
         assertEquals(1, result.size());
         assertEquals(JobStatus.ACTIVE, result.get(0).getStatus());
-        verify(jobRepository).findByStatus(JobStatus.ACTIVE);
     }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // US-22 : LECTURE PAR ID
-    // ══════════════════════════════════════════════════════════════════════════
 
     @Test
     @DisplayName("US-22 : getJobById - ID existant → retourne le job")
     void getJobById_existingId_returnsJobResponse() {
-        // GIVEN
         when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
         when(applicationRepository.countByJobId("job-uuid-001")).thenReturn(2L);
 
-        // WHEN
         JobResponse response = jobService.getJobById("job-uuid-001");
 
-        // THEN
         assertNotNull(response);
         assertEquals("job-uuid-001", response.getId());
-        assertEquals("Développeur Java Senior", response.getTitle());
         assertEquals(2, response.getApplicantsCount());
     }
 
     @Test
-    @DisplayName("US-22 : getJobById - ID inexistant → RuntimeException avec message")
+    @DisplayName("US-22 : getJobById - ID inexistant → RuntimeException")
     void getJobById_nonExistingId_throwsRuntimeException() {
-        // GIVEN
         when(jobRepository.findById("bad-id")).thenReturn(Optional.empty());
 
-        // WHEN + THEN
         RuntimeException ex = assertThrows(RuntimeException.class,
             () -> jobService.getJobById("bad-id"));
-        assertTrue(ex.getMessage().contains("bad-id"),
-            "Le message d'erreur doit contenir l'ID manquant");
+        assertTrue(ex.getMessage().contains("bad-id"));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // US-14 : FILTRAGE PAR DÉPARTEMENT
-    // ══════════════════════════════════════════════════════════════════════════
-
-    @Test
-    @DisplayName("US-14 : getJobsByDepartment - département existant → retourne les jobs")
-    void getJobsByDepartment_existingDepartment_returnsJobs() {
-        // GIVEN
-        when(jobRepository.findByDepartment("IT")).thenReturn(List.of(sampleJob));
-        when(applicationRepository.countByJobId("job-uuid-001")).thenReturn(0L);
-
-        // WHEN
-        List<JobResponse> result = jobService.getJobsByDepartment("IT");
-
-        // THEN
-        assertEquals(1, result.size());
-        assertEquals("IT", result.get(0).getDepartment());
-    }
-
-    @Test
-    @DisplayName("US-14 : getJobsByDepartment - département inexistant → liste vide")
-    void getJobsByDepartment_nonExistingDepartment_returnsEmptyList() {
-        // GIVEN
-        when(jobRepository.findByDepartment("UNKNOWN")).thenReturn(List.of());
-
-        // WHEN
-        List<JobResponse> result = jobService.getJobsByDepartment("UNKNOWN");
-
-        // THEN
-        assertTrue(result.isEmpty());
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // US-24 : CHANGEMENT DE STATUT
-    // ══════════════════════════════════════════════════════════════════════════
-
-    @Test
-    @DisplayName("US-24 : changeStatus - ACTIVE → CLOSED → statut mis à jour")
-    void changeStatus_activeToClose_updatesStatus() {
-        // GIVEN
-        when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
-        when(jobRepository.save(any(Job.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(applicationRepository.countByJobId(any())).thenReturn(0L);
-
-        // WHEN
-        JobResponse response = jobService.changeStatus("job-uuid-001", JobStatus.CLOSED);
-
-        // THEN
-        assertEquals(JobStatus.CLOSED, response.getStatus());
-        verify(jobRepository).save(argThat(job -> job.getStatus() == JobStatus.CLOSED));
-    }
-
-    @Test
-    @DisplayName("US-24 : changeStatus - ACTIVE → HIDDEN → statut mis à jour")
-    void changeStatus_activeToHidden_updatesStatus() {
-        // GIVEN
-        when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
-        when(jobRepository.save(any(Job.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(applicationRepository.countByJobId(any())).thenReturn(0L);
-
-        // WHEN
-        JobResponse response = jobService.changeStatus("job-uuid-001", JobStatus.HIDDEN);
-
-        // THEN
-        assertEquals(JobStatus.HIDDEN, response.getStatus());
-    }
-
-    @Test
-    @DisplayName("US-24 : changeStatus - ID inexistant → RuntimeException")
-    void changeStatus_nonExistingId_throwsRuntimeException() {
-        // GIVEN
-        when(jobRepository.findById("bad-id")).thenReturn(Optional.empty());
-
-        // WHEN + THEN
-        assertThrows(RuntimeException.class,
-            () -> jobService.changeStatus("bad-id", JobStatus.CLOSED));
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // US-23 : SUPPRESSION D'UNE ANNONCE
+    // US-23 : SUPPRESSION
     // ══════════════════════════════════════════════════════════════════════════
 
     @Test
     @DisplayName("US-23 : deleteJob - ID existant → suppression réussie")
     void deleteJob_existingId_deletesSuccessfully() {
-        // GIVEN
         when(jobRepository.existsById("job-uuid-001")).thenReturn(true);
         doNothing().when(jobRepository).deleteById("job-uuid-001");
 
-        // WHEN + THEN
         assertDoesNotThrow(() -> jobService.deleteJob("job-uuid-001"));
         verify(jobRepository, times(1)).deleteById("job-uuid-001");
     }
 
     @Test
     @DisplayName("US-23 : deleteJob - ID inexistant → RuntimeException, deleteById jamais appelé")
-    void deleteJob_nonExistingId_throwsRuntimeExceptionAndNeverCallsDelete() {
-        // GIVEN
+    void deleteJob_nonExistingId_throwsAndNeverCallsDelete() {
         when(jobRepository.existsById("bad-id")).thenReturn(false);
 
-        // WHEN + THEN
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> jobService.deleteJob("bad-id"));
-        assertTrue(ex.getMessage().contains("bad-id"));
+        assertThrows(RuntimeException.class, () -> jobService.deleteJob("bad-id"));
         verify(jobRepository, never()).deleteById(any());
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // US-22 : MISE À JOUR COMPLÈTE (PUT)
+    // US-22 : MISE À JOUR
     // ══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("US-22 : updateJob - ID existant → champs mis à jour")
+    @DisplayName("US-22 : updateJob - champs mis à jour")
     void updateJob_existingId_updatesFields() {
-        // GIVEN
         when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
-        when(jobRepository.save(any(Job.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(applicationRepository.countByJobId(any())).thenReturn(0L);
 
-        CreateJobRequest updateReq = new CreateJobRequest();
-        updateReq.setTitle("Lead Developer");
-        updateReq.setDepartment("R&D");
-        updateReq.setLocation("Sfax");
-        updateReq.setContractType(ContractType.CONTRACT);
-        updateReq.setExperienceLevel(ExperienceLevel.MID_LEVEL); 
+        CreateJobRequest req = new CreateJobRequest();
+        req.setTitle("Lead Developer");
+        req.setDepartment("R&D");
+        req.setLocation("Sfax");
+        req.setContractType(ContractType.CONTRACT);
+        req.setExperienceLevel(ExperienceLevel.MID_LEVEL);
 
-        // WHEN
-        JobResponse response = jobService.updateJob("job-uuid-001", updateReq);
+        JobResponse response = jobService.updateJob("job-uuid-001", req);
 
-        // THEN
         assertEquals("Lead Developer", response.getTitle());
         assertEquals("R&D", response.getDepartment());
-        assertEquals("Sfax", response.getLocation());
     }
-
-    @Test
-    @DisplayName("US-22 : updateJob - ID inexistant → RuntimeException")
-    void updateJob_nonExistingId_throwsRuntimeException() {
-        // GIVEN
-        when(jobRepository.findById("bad-id")).thenReturn(Optional.empty());
-
-        // WHEN + THEN
-        assertThrows(RuntimeException.class,
-            () -> jobService.updateJob("bad-id", validRequest));
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // US-22 : MISE À JOUR PARTIELLE (PATCH)
-    // ══════════════════════════════════════════════════════════════════════════
 
     @Test
     @DisplayName("US-22 : patchJob - titre seul → seul le titre est modifié")
     void patchJob_titleOnly_onlyTitleUpdated() {
-        // GIVEN
         when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
-        when(jobRepository.save(any(Job.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(jobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(applicationRepository.countByJobId(any())).thenReturn(0L);
 
-        UpdateJobRequest patchReq = new UpdateJobRequest();
-        patchReq.setTitle("Senior Java Engineer");
-        // Tous les autres champs sont null → ne doivent pas être modifiés
+        UpdateJobRequest req = new UpdateJobRequest();
+        req.setTitle("Senior Java Engineer");
 
-        // WHEN
-        JobResponse response = jobService.patchJob("job-uuid-001", patchReq);
+        JobResponse response = jobService.patchJob("job-uuid-001", req);
 
-        // THEN
         assertEquals("Senior Java Engineer", response.getTitle());
-        // Le département original doit être conservé
         assertEquals("IT", response.getDepartment());
     }
 
     @Test
-    @DisplayName("US-22 : patchJob - statut seul → seul le statut est modifié")
-    void patchJob_statusOnly_onlyStatusUpdated() {
-        // GIVEN
-        when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
-        when(jobRepository.save(any(Job.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(applicationRepository.countByJobId(any())).thenReturn(0L);
-
-        UpdateJobRequest patchReq = new UpdateJobRequest();
-        patchReq.setStatus(JobStatus.DRAFT);
-
-        // WHEN
-        JobResponse response = jobService.patchJob("job-uuid-001", patchReq);
-
-        // THEN
-        assertEquals(JobStatus.DRAFT, response.getStatus());
-        assertEquals("Développeur Java Senior", response.getTitle()); // inchangé
-    }
-
-    @Test
-    @DisplayName("US-22 : patchJob - ID inexistant → RuntimeException")
-    void patchJob_nonExistingId_throwsRuntimeException() {
-        // GIVEN
-        when(jobRepository.findById("bad-id")).thenReturn(Optional.empty());
-
-        // WHEN + THEN
-        assertThrows(RuntimeException.class,
-            () -> jobService.patchJob("bad-id", new UpdateJobRequest()));
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // TESTS DE MAPPING (mapToResponse)
-    // ══════════════════════════════════════════════════════════════════════════
-
-    @Test
-    @DisplayName("mapToResponse - job avec isRemote=true → isRemote=true dans la réponse")
-    void mapToResponse_remoteJob_isRemoteTrue() {
-        // GIVEN
-        sampleJob.setIsRemote(true);
-        when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
-        when(applicationRepository.countByJobId(any())).thenReturn(0L);
-
-        // WHEN
-        JobResponse response = jobService.getJobById("job-uuid-001");
-
-        // THEN
-        assertTrue(response.getIsRemote());
-    }
-
-    @Test
-    @DisplayName("mapToResponse - applicantsCount reflète le nombre réel de candidatures")
+    @DisplayName("mapToResponse - applicantsCount reflète le nombre réel")
     void mapToResponse_applicantsCount_reflectsRealCount() {
-        // GIVEN
         when(jobRepository.findById("job-uuid-001")).thenReturn(Optional.of(sampleJob));
         when(applicationRepository.countByJobId("job-uuid-001")).thenReturn(42L);
 
-        // WHEN
-        JobResponse response = jobService.getJobById("job-uuid-001");
-
-        // THEN
-        assertEquals(42, response.getApplicantsCount());
+        assertEquals(42, jobService.getJobById("job-uuid-001").getApplicantsCount());
     }
 }

@@ -10,6 +10,9 @@ import org.springframework.stereotype.Service;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -96,7 +99,7 @@ public class CodeExecutionService {
         Path tempDir = null;
 
         try {
-            tempDir = Files.createTempDirectory("nexgen_exec_");
+            tempDir = createSecureTempDir();
             Path codeFile = tempDir.resolve(FILE_NAMES.get(lang));
             Files.writeString(codeFile, code, StandardCharsets.UTF_8);
 
@@ -402,5 +405,26 @@ public class CodeExecutionService {
                  .map(Path::toFile)
                  .forEach(File::delete);
         } catch (IOException ignored) {}
+    }
+
+    private Path createSecureTempDir() throws IOException {
+        try {
+            // Restrict to owner-only (rwx------) on POSIX systems (Linux/Docker)
+            Set<PosixFilePermission> perms =
+                    PosixFilePermissions.fromString("rwx------");
+            FileAttribute<Set<PosixFilePermission>> attr =
+                    PosixFilePermissions.asFileAttribute(perms);
+            return Files.createTempDirectory("nexgen_exec_", attr);
+        } catch (UnsupportedOperationException e) {
+            // Windows: fall back to default temp dir (Docker always runs on Linux)
+            Path dir = Files.createTempDirectory("nexgen_exec_");
+            dir.toFile().setReadable(false, false);
+            dir.toFile().setWritable(false, false);
+            dir.toFile().setExecutable(false, false);
+            dir.toFile().setReadable(true, true);
+            dir.toFile().setWritable(true, true);
+            dir.toFile().setExecutable(true, true);
+            return dir;
+        }
     }
 }

@@ -276,20 +276,20 @@ class JobRepositoryTest {
     @DisplayName("TC-JREPO-15 : findLatestJobsByStatus → retourne les jobs triés par date desc")
     void findLatestJobsByStatus_returnsSortedByDateDesc() {
         // GIVEN
-        Job older = buildJob("Older Hidden", "Finance", JobStatus.HIDDEN, "desc");
+        Job older = buildJob("Older Paused", "Finance", JobStatus.PAUSED, "desc");
         older.setCreatedAt(LocalDateTime.now().minusDays(5));
-        Job newer = buildJob("Newer Hidden", "Finance", JobStatus.HIDDEN, "desc");
+        Job newer = buildJob("Newer Paused", "Finance", JobStatus.PAUSED, "desc");
         newer.setCreatedAt(LocalDateTime.now());
 
         jobRepository.save(older);
         jobRepository.save(newer);
 
         // WHEN
-        List<Job> result = jobRepository.findLatestJobsByStatus(JobStatus.HIDDEN);
+        List<Job> result = jobRepository.findLatestJobsByStatus(JobStatus.PAUSED);
 
         // THEN : le job le plus récent doit être en premier
         assertFalse(result.isEmpty());
-        // Vérifier que les résultats sont bien des jobs HIDDEN
-        result.forEach(j -> assertEquals(JobStatus.HIDDEN, j.getStatus()));
+        // Vérifier que les résultats sont bien des jobs PAUSED
+        result.forEach(j -> assertEquals(JobStatus.PAUSED, j.getStatus()));
     }
 }

@@ -1,5 +1,5 @@
 package com.nexgenai.model.enums;
 
 public enum JobStatus {
-    DRAFT, ACTIVE, CLOSED, HIDDEN
+    DRAFT, ACTIVE, PAUSED, CLOSED
 }

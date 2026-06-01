@@ -14,7 +14,6 @@ import com.nexgenai.service.AntiCheatService;
 import com.nexgenai.service.ApplicationService;
 import com.nexgenai.service.ApplicationStageProgressService;
 import com.nexgenai.service.CandidateService;
-import com.nexgenai.service.ChatbotService;
 import com.nexgenai.service.CvMatchingService;
 import com.nexgenai.service.TestSessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,7 +51,6 @@ public class CandidateController {
 
     private final CandidateService                candidateService;
     private final ApplicationService              applicationService;
-    private final ChatbotService                  chatbotService;
     private final ApplicationStageProgressService stageProgressService;
     private final CvMatchingService               cvMatchingService;
     private final TestSessionService              testSessionService;
@@ -175,72 +173,6 @@ public class CandidateController {
             @RequestParam(value = "audio", required = false) MultipartFile audio) {
         applicationService.submitApplication(u.getUsername(), jobId, cv, audio);
         return ResponseEntity.ok(Map.of("message", "Application submitted!", "jobId", jobId));
-    }
-
-    // ── Chat: init session ────────────────────────────────────────────────────
-
-    @PostMapping("/chat/init")
-    public ResponseEntity<Map<String, Object>> initChat(
-            @AuthenticationPrincipal UserDetails u,
-            @RequestBody Map<String, String> body) {
-        String jobId = body.get("jobId");
-        if (jobId == null || jobId.isBlank())
-            return ResponseEntity.badRequest().body(Map.of("error", "jobId required"));
-
-        ChatbotService.InitResult result = chatbotService.initSession(u.getUsername(), jobId);
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("sessionId",     result.sessionId());
-        response.put("questionCount", result.questionCount());
-        response.put("history",       result.history());
-        return ResponseEntity.ok(response);
-    }
-
-    // ── Chat: text message ────────────────────────────────────────────────────
-
-    @PostMapping("/chat/message")
-    public ResponseEntity<Map<String, Object>> chat(
-            @AuthenticationPrincipal UserDetails u,
-            @RequestBody Map<String, String> body) {
-        String sessionId = body.get("sessionId");
-        String message   = body.get("message");
-        if (sessionId == null || sessionId.isBlank())
-            return ResponseEntity.badRequest().body(Map.of("error", "sessionId required"));
-        if (message == null || message.isBlank())
-            return ResponseEntity.badRequest().body(Map.of("error", "message required"));
-
-        ChatbotService.ChatResponse res = chatbotService.processMessage(sessionId, message);
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("reply", res.reply());
-        result.put("done",  res.done());
-        if (res.score() != null) result.put("score", res.score());
-        return ResponseEntity.ok(result);
-    }
-
-    // ── Chat: voice message ───────────────────────────────────────────────────
-
-    @PostMapping(value = "/chat/voice", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<Map<String, Object>> chatVoice(
-            @AuthenticationPrincipal UserDetails u,
-            @RequestParam("sessionId") String sessionId,
-            @RequestParam("audio")     MultipartFile audio) {
-        String transcript = transcribeAudio(audio);
-        if (transcript == null || transcript.isBlank()) {
-            return ResponseEntity.badRequest().body(
-                    Map.of("error", "Could not transcribe audio. Please type your answer."));
-        }
-        ChatbotService.ChatResponse res = chatbotService.processMessage(sessionId, transcript);
-        Map<String, Object> result = new HashMap<>();
-        result.put("transcript", transcript);
-        result.put("reply",      res.reply());
-        result.put("done",       res.done());
-        if (res.score() != null) result.put("score", res.score());
-        return ResponseEntity.ok(result);
-    }
-
-    private String transcribeAudio(MultipartFile audio) {
-        return null; // Whisper pas encore câblé — client utilise Web Speech API
     }
 
     // ── Test psychométrique (start session) ───────────────────────────────────

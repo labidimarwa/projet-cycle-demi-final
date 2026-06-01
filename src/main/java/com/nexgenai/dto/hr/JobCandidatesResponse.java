@@ -35,11 +35,6 @@ public class JobCandidatesResponse {
         private Integer matchScore;      // 0-100
         private String  matchVerdict;
 
-        // Chat interview
-        private Boolean chatDone;
-        private Integer chatScore;       // interview score 0-100
-        private Integer chatQuestions;   // how many questions answered
-
         // CV
         private Boolean hasCv;
         private String  cvDisplayName;

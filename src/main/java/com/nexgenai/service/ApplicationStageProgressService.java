@@ -9,7 +9,6 @@ import com.nexgenai.model.enums.NotificationType;
 import com.nexgenai.model.enums.StageProgressStatus;
 import com.nexgenai.model.enums.StageType;
 import com.nexgenai.repository.ApplicationStageProgressRepository;
-import com.nexgenai.repository.ChatSessionRepository;
 import com.nexgenai.repository.JobMatchRepository;
 import com.nexgenai.repository.JobRepository;
 import org.springframework.context.annotation.Lazy;
@@ -25,19 +24,16 @@ public class ApplicationStageProgressService {
     private final ApplicationStageProgressRepository progressRepo;
     private final JobRepository                      jobRepo;
     private final JobMatchRepository                 jobMatchRepo;
-    private final ChatSessionRepository              chatSessionRepo;
     private final NotificationService                notificationService;
 
     public ApplicationStageProgressService(
             ApplicationStageProgressRepository progressRepo,
             JobRepository jobRepo,
             JobMatchRepository jobMatchRepo,
-            ChatSessionRepository chatSessionRepo,
             @Lazy NotificationService notificationService) {
         this.progressRepo        = progressRepo;
         this.jobRepo             = jobRepo;
         this.jobMatchRepo        = jobMatchRepo;
-        this.chatSessionRepo     = chatSessionRepo;
         this.notificationService = notificationService;
     }
 
@@ -102,7 +98,7 @@ public class ApplicationStageProgressService {
     // ── AUTO-ADVANCE ──────────────────────────────────────────────────────────
 
     /**
-     * Inspects existing data sources (JobMatch, ChatSession, TestSession) and
+     * Inspects existing data sources (JobMatch, TestSession) and
      * advances stages to COMPLETED / IN_PROGRESS automatically.
      */
     @Transactional

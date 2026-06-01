@@ -62,6 +62,33 @@ jobs:
             -DfailIfNoTests=true \
             --no-transfer-progress
 
+      # Sprint 2 — Sécurité (TC-SEC2-01 à TC-SEC2-17)
+      - name: Sprint 2 — Security Tests (17 tests)
+        run: |
+          ./mvnw test \
+            -Dtest=Sprint2SecurityTest \
+            -Dspring.profiles.active=test \
+            -DfailIfNoTests=true \
+            --no-transfer-progress
+
+      # Sprint 2 — TestSessionService (TC-RH-01 à TC-RH-11)
+      - name: Sprint 2 — TestSessionService Tests (11 tests)
+        run: |
+          ./mvnw test \
+            -Dtest=TestSessionServiceTest \
+            -Dspring.profiles.active=test \
+            -DfailIfNoTests=true \
+            --no-transfer-progress
+
+      # Sprint 2 — CvMatchingService (TC-SC-01 à TC-SC-10)
+      - name: Sprint 2 — CvMatchingService Tests (10 tests)
+        run: |
+          ./mvnw test \
+            -Dtest=CvMatchingServiceTest \
+            -Dspring.profiles.active=test \
+            -DfailIfNoTests=true \
+            --no-transfer-progress
+
       # Full build + JaCoCo coverage report
       - name: Full Build + JaCoCo Coverage
         run: ./mvnw clean verify -Dspring.profiles.active=test --no-transfer-progress

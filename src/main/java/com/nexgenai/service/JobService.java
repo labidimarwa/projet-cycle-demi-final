@@ -8,6 +8,7 @@ import com.nexgenai.model.enums.ContractType;
 import com.nexgenai.model.enums.ExperienceLevel;
 import com.nexgenai.model.enums.JobStatus;
 import com.nexgenai.model.enums.NotificationType;
+import com.nexgenai.model.enums.StageType;
 import com.nexgenai.repository.ApplicationRepository;
 import com.nexgenai.repository.JobRepository;
 import com.nexgenai.repository.UserRepository;
@@ -17,13 +18,33 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
 public class JobService {
+
+    // ── Machine d'états ───────────────────────────────────────────────────────
+    private static final Map<JobStatus, Set<JobStatus>> ALLOWED_TRANSITIONS = Map.of(
+        JobStatus.DRAFT,  EnumSet.of(JobStatus.ACTIVE),
+        JobStatus.ACTIVE, EnumSet.of(JobStatus.PAUSED, JobStatus.CLOSED),
+        JobStatus.PAUSED, EnumSet.of(JobStatus.ACTIVE, JobStatus.CLOSED),
+        JobStatus.CLOSED, EnumSet.noneOf(JobStatus.class)
+    );
+
+    // Étapes nécessitant un responsable humain assigné
+    private static final Set<StageType> HUMAN_STAGE_TYPES = EnumSet.of(
+        StageType.TECHNICAL_TEST,
+        StageType.RH_TEST,
+        StageType.RH_INTERVIEW,
+        StageType.TECHNICAL_INTERVIEW,
+        StageType.ADMIN_INTERVIEW
+    );
 
     private final JobRepository         jobRepository;
     private final ApplicationRepository applicationRepository;
@@ -49,6 +70,7 @@ public class JobService {
     // ── CREATE ────────────────────────────────────────────────────────────────
     @Transactional
     public JobResponse createJob(CreateJobRequest req, String createdByHrId) {
+        validateJobRequest(req);
         Job job = new Job();
         applyRequestToJob(job, req);
         job.setStatus(JobStatus.DRAFT);
@@ -285,6 +307,7 @@ public class JobService {
     public JobResponse changeStatus(String id, JobStatus newStatus) {
         Job job = jobRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Job not found: " + id));
+        validateTransition(job.getStatus(), newStatus);
         job.setStatus(newStatus);
         Job saved = jobRepository.save(job);
 
@@ -321,6 +344,47 @@ public class JobService {
     }
 
     // ── HELPERS ───────────────────────────────────────────────────────────────
+
+    private void validateTransition(JobStatus from, JobStatus to) {
+        Set<JobStatus> allowed = ALLOWED_TRANSITIONS.getOrDefault(from, Set.of());
+        if (!allowed.contains(to))
+            throw new IllegalStateException(
+                "Transition interdite : " + from + " → " + to);
+    }
+
+    private void validateJobRequest(CreateJobRequest req) {
+        int sw  = req.getSkillsWeight()        != null ? req.getSkillsWeight()        : 70;
+        int pw  = req.getPrerequisitesWeight()  != null ? req.getPrerequisitesWeight()  : 30;
+        if (sw + pw != 100)
+            throw new IllegalArgumentException(
+                "skillsWeight + prerequisitesWeight doit être égal à 100 (obtenu : " + (sw + pw) + ")");
+
+        int tw  = req.getTechnicalSkillWeight() != null ? req.getTechnicalSkillWeight() : 60;
+        int sfw = req.getSoftSkillWeight()      != null ? req.getSoftSkillWeight()      : 40;
+        if (tw + sfw != 100)
+            throw new IllegalArgumentException(
+                "technicalSkillWeight + softSkillWeight doit être égal à 100 (obtenu : " + (tw + sfw) + ")");
+
+        if (req.getPrerequisites() == null || req.getPrerequisites().isEmpty())
+            throw new IllegalArgumentException("Au moins un prérequis est obligatoire");
+        req.getPrerequisites().forEach(p -> {
+            if (p.getValue() == null || p.getValue().isBlank())
+                throw new IllegalArgumentException("Chaque prérequis doit avoir une valeur non nulle");
+        });
+
+        if (req.getTechnicalSkills() == null || req.getTechnicalSkills().isEmpty())
+            throw new IllegalArgumentException("Au moins une compétence est obligatoire");
+
+        if (req.getWorkflowStages() != null) {
+            req.getWorkflowStages().forEach(stage -> {
+                if (stage.getStageType() != null
+                        && HUMAN_STAGE_TYPES.contains(stage.getStageType())
+                        && (stage.getAssigneeId() == null || stage.getAssigneeId().isBlank()))
+                    throw new IllegalArgumentException(
+                        "L'étape \"" + stage.getStageType() + "\" doit avoir un responsable assigné (assigneeId)");
+            });
+        }
+    }
 
     private void applyRequestToJob(Job job, CreateJobRequest req) {
         job.setTitle(req.getTitle());

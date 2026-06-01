@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -66,14 +67,22 @@ class JobControllerTest {
 
     private Map<String, Object> buildJobRequest(String title, String dept) {
         Map<String, Object> req = new HashMap<>();
-        req.put("title",           title);
-        req.put("department",      dept);
-        req.put("location",        "Tunis");
-        req.put("contractType",    ContractType.CONTRACT.name());
-        req.put("experienceLevel", ExperienceLevel.SENIOR.name());
-        req.put("description",     "Description du poste " + title);
-        req.put("openPositions",   1);
-        req.put("isRemote",        false);
+        req.put("title",                title);
+        req.put("department",           dept);
+        req.put("location",             "Tunis");
+        req.put("contractType",         ContractType.CONTRACT.name());
+        req.put("experienceLevel",      ExperienceLevel.SENIOR.name());
+        req.put("description",          "Description du poste " + title);
+        req.put("openPositions",        1);
+        req.put("isRemote",             false);
+        req.put("skillsWeight",         70);
+        req.put("prerequisitesWeight",  30);
+        req.put("technicalSkillWeight", 60);
+        req.put("softSkillWeight",      40);
+        req.put("prerequisites",  List.of(
+            Map.of("type", "DEGREE", "value", "Bac+3", "obligatory", true)));
+        req.put("technicalSkills", List.of(
+            Map.of("name", "Java", "obligatory", true, "skillType", "TECHNICAL")));
         return req;
     }
 

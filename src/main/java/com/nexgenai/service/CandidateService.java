@@ -33,7 +33,6 @@ public class CandidateService {
     private final ApplicationStageProgressRepository  stageProgressRepository;
     private final FileStorageService                  fileStorageService;
     private final FileSecurityValidator               fileSecurityValidator;
-    private final ChatSessionRepository               chatSessionRepository;
     private final AssessmentRepository                assessmentRepository;
     private final TestSessionRepository               testSessionRepository;
     private final QuestionRepository                  questionRepository;
@@ -153,10 +152,6 @@ public class CandidateService {
         Integer matchScore    = matchOpt.map(JobMatch::getScore).orElse(null);
         boolean matchComputed = matchOpt.isPresent();
 
-        Optional<ChatSession> chatOpt = chatSessionRepository.findByCandidateIdAndJobId(candidateId, jobId);
-        boolean chatDone  = chatOpt.map(ChatSession::isDone).orElse(false);
-        Integer chatScore = chatOpt.map(ChatSession::getInterviewScore).orElse(null);
-
         List<Assessment> assessments = assessmentRepository.findByJobId(jobId);
         List<CandidateApplicationResponse.JobTestInfo> testInfos = assessments.stream()
                 .map(a -> buildTestInfo(candidateId, a))
@@ -180,8 +175,6 @@ public class CandidateService {
                 .appliedAt(app.getAppliedAt())
                 .matchScore(matchScore)
                 .matchComputed(matchComputed)
-                .chatDone(chatDone)
-                .chatScore(chatScore)
                 .tests(testInfos)
                 .stageProgress(stages)
                 .build();

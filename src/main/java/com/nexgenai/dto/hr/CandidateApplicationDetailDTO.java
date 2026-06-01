@@ -4,7 +4,6 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 /**
  * Full detail returned by GET /hr/jobs/{jobId}/candidates/{candidateId}
@@ -35,9 +34,6 @@ public class CandidateApplicationDetailDTO {
     // ── AI Match result ──────────────────────────────────────────────────────
     private MatchDetailDTO match;
 
-    // ── Chat interview ────────────────────────────────────────────────────────
-    private ChatDetailDTO chat;
-
     // ── Application meta ─────────────────────────────────────────────────────
     private LocalDateTime appliedAt;
 
@@ -54,23 +50,4 @@ public class CandidateApplicationDetailDTO {
         private LocalDateTime computedAt;
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    @Data
-    @Builder
-    public static class ChatDetailDTO {
-        private String  sessionId;
-        private boolean done;
-        private Integer score;           // final interview score
-        private Integer questionCount;
-        private List<MessageDTO> messages;
-        private LocalDateTime startedAt;
-        private LocalDateTime updatedAt;
-    }
-
-    @Data
-    @Builder
-    public static class MessageDTO {
-        private String role;    // "user" | "assistant" | "system"
-        private String content;
-    }
 }

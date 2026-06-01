@@ -1,11 +1,13 @@
 package com.nexgenai.controller;
 
+import com.nexgenai.dto.anticheat.RecordAntiCheatEventRequest;
 import com.nexgenai.model.AntiCheatEvent;
 import com.nexgenai.repository.AntiCheatEventRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -33,10 +35,17 @@ public class AntiCheatController {
      */
     @PostMapping("/events")
     public ResponseEntity<AntiCheatEvent> recordEvent(
-            @RequestBody AntiCheatEvent event) {
-        if (event.getOccurredAt() == null) {
-            event.setOccurredAt(java.time.LocalDateTime.now());
-        }
+            @RequestBody RecordAntiCheatEventRequest request) {
+        AntiCheatEvent event = AntiCheatEvent.builder()
+                .testId(request.getTestId())
+                .sessionId(request.getSessionId())
+                .type(request.getType())
+                .detail(request.getDetail())
+                .questionIndex(request.getQuestionIndex())
+                .occurredAt(request.getOccurredAt() != null
+                        ? request.getOccurredAt()
+                        : LocalDateTime.now())
+                .build();
         return ResponseEntity.ok(antiCheatEventRepository.save(event));
     }
 }

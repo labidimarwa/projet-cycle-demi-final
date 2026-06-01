@@ -1,6 +1,5 @@
 package com.nexgenai.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.dto.candidate.StageProgressDTO;
 import com.nexgenai.dto.hr.*;
@@ -41,7 +40,6 @@ public class HrService {
     private final UserRepository                      userRepository;
     private final JobRepository                       jobRepository;
     private final JobMatchRepository                  jobMatchRepository;
-    private final ChatSessionRepository               chatSessionRepository;
     private final EmailService                        emailService;
     private final NotificationService                 notificationService;
     private final ObjectMapper                        objectMapper;
@@ -95,14 +93,6 @@ public class HrService {
         List<String> skillsMissing = matchOpt
                 .map(m -> parseCommaSeparated(m.getSkillsMissing())).orElse(List.of());
 
-        // Chat transcript
-        Optional<ChatSession> chatOpt = chatSessionRepository.findByCandidateIdAndJobId(candidateId, jobId);
-        boolean chatDone  = chatOpt.map(ChatSession::isDone).orElse(false);
-        Integer chatScore = chatOpt.map(ChatSession::getInterviewScore).orElse(null);
-
-        List<ApplicantDetailResponse.ChatMessage> transcript = chatOpt
-                .map(this::buildTranscript).orElse(List.of());
-
         // Stage progress
         List<ApplicationStageProgress> stageRows = stageProgressService.getProgress(candidateId, jobId);
         List<StageProgressDTO> stageProgress = stageRows.stream()
@@ -127,9 +117,6 @@ public class HrService {
                 .dimensions(dimensions)
                 .skillsMatched(skillsMatched)
                 .skillsMissing(skillsMissing)
-                .chatDone(chatDone)
-                .chatScore(chatScore)
-                .chatTranscript(transcript)
                 .stageProgress(stageProgress)
                 .build();
     }
@@ -222,23 +209,6 @@ public class HrService {
                 .build();
         }
 
-        // Chat
-        CandidateApplicationDetailDTO.ChatDetailDTO chatDTO = null;
-        Optional<ChatSession> chatOpt = chatSessionRepository.findByCandidateIdAndJobId(candidateId, jobId);
-        if (chatOpt.isPresent()) {
-            ChatSession session = chatOpt.get();
-            List<CandidateApplicationDetailDTO.MessageDTO> messages = parseMessages(session.getMessagesJson());
-            chatDTO = CandidateApplicationDetailDTO.ChatDetailDTO.builder()
-                .sessionId(session.getId())
-                .done(session.isDone())
-                .score(session.getInterviewScore())
-                .questionCount(session.getQuestionCount())
-                .messages(messages)
-                .startedAt(session.getCreatedAt())
-                .updatedAt(session.getUpdatedAt())
-                .build();
-        }
-
         String cvDisplay = null;
         if (candidate.getCvPath() != null) {
             cvDisplay = candidate.getCvPath().contains("|")
@@ -264,7 +234,6 @@ public class HrService {
             .remoteWorkPreference(candidate.getRemoteWorkPreference())
             .certifications(candidate.getCertifications())
             .match(matchDTO)
-            .chat(chatDTO)
             .appliedAt(app.getAppliedAt())
             .build();
     }
@@ -421,10 +390,6 @@ public class HrService {
         Integer matchScore    = matchOpt.map(JobMatch::getScore).orElse(null);
         boolean matchComputed = matchScore != null;
 
-        Optional<ChatSession> chatOpt = chatSessionRepository.findByCandidateIdAndJobId(candidateId, jobId);
-        boolean chatDone  = chatOpt.map(ChatSession::isDone).orElse(false);
-        Integer chatScore = chatOpt.map(ChatSession::getInterviewScore).orElse(null);
-
         String  currentStageName = null;
         int     stageProgressPct = 0;
         List<ApplicationStageProgress> stageRows =
@@ -450,8 +415,6 @@ public class HrService {
                 .appliedAt(app.getAppliedAt() != null ? app.getAppliedAt().format(ISO_FMT) : null)
                 .matchScore(matchScore)
                 .matchComputed(matchComputed)
-                .chatDone(chatDone)
-                .chatScore(chatScore)
                 .currentStageName(currentStageName)
                 .stageProgress(stageProgressPct)
                 .hasCv(candidate.getCvPath() != null)
@@ -470,16 +433,6 @@ public class HrService {
         Optional<JobMatch> m = jobMatchRepository.findByCandidateIdAndJobId(app.getCandidateId(), jobId);
         if (m.isPresent()) { matchScore = m.get().getScore(); matchVerdict = m.get().getVerdict(); }
 
-        Boolean chatDone      = null;
-        Integer chatScore     = null;
-        Integer chatQuestions = null;
-        Optional<ChatSession> cs = chatSessionRepository.findByCandidateIdAndJobId(app.getCandidateId(), jobId);
-        if (cs.isPresent()) {
-            chatDone      = cs.get().isDone();
-            chatScore     = cs.get().getInterviewScore();
-            chatQuestions = cs.get().getQuestionCount();
-        }
-
         String cvDisplay = null;
         if (c.getCvPath() != null) {
             cvDisplay = c.getCvPath().contains("|")
@@ -496,9 +449,6 @@ public class HrService {
             .city(c.getCity())
             .matchScore(matchScore)
             .matchVerdict(matchVerdict)
-            .chatDone(chatDone)
-            .chatScore(chatScore)
-            .chatQuestions(chatQuestions)
             .hasCv(c.getCvPath() != null)
             .cvDisplayName(cvDisplay)
             .appliedAt(app.getAppliedAt())
@@ -525,28 +475,6 @@ public class HrService {
         return ApplicantDetailResponse.DimensionScore.builder().name(name).score(score).build();
     }
 
-    private List<ApplicantDetailResponse.ChatMessage> buildTranscript(ChatSession session) {
-        if (session.getMessagesJson() == null || session.getMessagesJson().isBlank()) {
-            return List.of();
-        }
-        try {
-            List<Map<String, String>> messages = objectMapper.readValue(
-                session.getMessagesJson(),
-                new TypeReference<List<Map<String, String>>>() {}
-            );
-            return messages.stream()
-                    .filter(msg -> !"system".equals(msg.get("role")))
-                    .map(msg -> ApplicantDetailResponse.ChatMessage.builder()
-                            .role(msg.get("role"))
-                            .content(msg.get("content"))
-                            .build())
-                    .collect(Collectors.toList());
-        } catch (Exception e) {
-            log.warn("Could not parse chat messages for session {}: {}", session.getId(), e.getMessage());
-            return List.of();
-        }
-    }
-
     private StageProgressDTO mapStageProgress(ApplicationStageProgress p) {
         return new StageProgressDTO(
                 p.getId(), p.getStageOrder(), p.getStageName(), p.getStageType(),
@@ -555,24 +483,6 @@ public class HrService {
                 p.getCompletedAt() != null ? p.getCompletedAt().toString() : null,
                 p.getHrNote()
         );
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<CandidateApplicationDetailDTO.MessageDTO> parseMessages(String json) {
-        if (json == null || json.isBlank()) return List.of();
-        try {
-            List<Map<String, String>> raw = objectMapper.readValue(json, new TypeReference<>() {});
-            return raw.stream()
-                .filter(m -> !"system".equals(m.get("role")))
-                .map(m -> CandidateApplicationDetailDTO.MessageDTO.builder()
-                    .role(m.get("role"))
-                    .content(m.get("content"))
-                    .build())
-                .collect(Collectors.toList());
-        } catch (Exception e) {
-            log.warn("Could not parse chat messages: {}", e.getMessage());
-            return List.of();
-        }
     }
 
     private List<String> parseCommaSeparated(String value) {

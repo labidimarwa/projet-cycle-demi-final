@@ -37,11 +37,6 @@ public class ApplicantDetailResponse {
     private List<String> skillsMatched;
     private List<String> skillsMissing;
 
-    // ── Chat / Interview ──────────────────────────────────────────────────────
-    private Boolean        chatDone;
-    private Integer        chatScore;
-    private List<ChatMessage> chatTranscript;
-
     // ── Process mapping stages ────────────────────────────────────────────────
     private List<StageProgressDTO> stageProgress;
 
@@ -52,12 +47,5 @@ public class ApplicantDetailResponse {
     public static class DimensionScore {
         private String  name;
         private Integer score;
-    }
-
-    @Data
-    @Builder
-    public static class ChatMessage {
-        private String role;     // "assistant" | "user"
-        private String content;
     }
 }

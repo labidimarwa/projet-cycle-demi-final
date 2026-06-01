@@ -1,0 +1,142 @@
+{
+  "title": "Développeur Full Stack Java / Angular",
+  "department": "Engineering",
+  "location": "Tunis, Tunisie",
+  "contractType": "FULL_TIME",
+  "experienceLevel": "MID_LEVEL",
+  "description": "Nous recherchons un développeur Full Stack passionné pour rejoindre notre équipe d'ingénierie. Vous travaillerez sur notre plateforme NexGenAI en utilisant Spring Boot au backend et Angular au frontend. Poste en hybride (3 jours sur site).",
+  "openPositions": 2,
+  "closingDate": "2026-08-31",
+  "isRemote": false,
+
+  "skillsWeight": 70,
+  "prerequisitesWeight": 30,
+  "technicalSkillWeight": 60,
+  "softSkillWeight": 40,
+
+  "prerequisites": [
+    {
+      "type": "DEGREE",
+      "value": "Licence en Informatique ou diplôme équivalent",
+      "obligatory": true,
+      "weight": 40,
+      "icon": "school",
+      "options": ["Licence", "Master", "Ingénieur"],
+      "instruction": "Sélectionner le niveau de diplôme le plus élevé obtenu",
+      "jsonSchema": "{\"type\":\"string\",\"enum\":[\"Licence\",\"Master\",\"Ingénieur\"]}"
+    },
+    {
+      "type": "EXPERIENCE",
+      "value": "2",
+      "obligatory": true,
+      "weight": 40,
+      "icon": "work",
+      "options": null,
+      "instruction": "Nombre d'années d'expérience professionnelle (minimum 2 ans)",
+      "jsonSchema": "{\"type\":\"number\",\"minimum\":2}"
+    },
+    {
+      "type": "LANGUAGE",
+      "value": "Français",
+      "obligatory": false,
+      "weight": 20,
+      "icon": "language",
+      "options": ["Débutant", "Intermédiaire", "Avancé", "Natif"],
+      "instruction": "Indiquer votre niveau en français",
+      "jsonSchema": "{\"type\":\"string\",\"enum\":[\"Débutant\",\"Intermédiaire\",\"Avancé\",\"Natif\"]}"
+    }
+  ],
+
+  "technicalSkills": [
+    {
+      "name": "Java",
+      "minLevel": 0.75,
+      "obligatory": true,
+      "weight": 25,
+      "skillType": "HARD"
+    },
+    {
+      "name": "Spring Boot",
+      "minLevel": 0.70,
+      "obligatory": true,
+      "weight": 25,
+      "skillType": "HARD"
+    },
+    {
+      "name": "Angular",
+      "minLevel": 0.65,
+      "obligatory": false,
+      "weight": 20,
+      "skillType": "HARD"
+    },
+    {
+      "name": "Docker",
+      "minLevel": 0.50,
+      "obligatory": false,
+      "weight": 15,
+      "skillType": "HARD"
+    },
+    {
+      "name": "PostgreSQL",
+      "minLevel": 0.60,
+      "obligatory": false,
+      "weight": 15,
+      "skillType": "HARD"
+    },
+    {
+      "name": "Communication",
+      "minLevel": 0.60,
+      "obligatory": false,
+      "weight": 50,
+      "skillType": "SOFT"
+    },
+    {
+      "name": "Travail en équipe",
+      "minLevel": 0.60,
+      "obligatory": false,
+      "weight": 50,
+      "skillType": "SOFT"
+    }
+  ],
+
+  "assessments": [
+    {
+      "type": "TECHNICAL_TEST",
+      "title": "Test technique Java & Spring Boot",
+      "description": "QCM de 30 questions couvrant Java 17, Spring Boot 3, JPA, REST API et sécurité.",
+      "durationMinutes": 60,
+      "passingScore": 70
+    }
+  ],
+
+  "workflowStages": [
+    {
+      "stageType": "AI_SCREENING",
+      "name": "Présélection IA",
+      "description": "Analyse automatique du CV par l'IA NexGenAI : scoring compétences / prérequis.",
+      "assignedTo": null,
+      "order": 1
+    },
+    {
+      "stageType": "RH_TEST",
+      "name": "Test RH en ligne",
+      "description": "Évaluation des soft skills et de la personnalité via questionnaire en ligne.",
+      "assignedTo": "hr@nexgenai.com",
+      "order": 2
+    },
+    {
+      "stageType": "RH_INTERVIEW",
+      "name": "Entretien RH",
+      "description": "Entretien de 30 minutes avec l'équipe RH pour valider la motivation et l'adéquation culturelle.",
+      "assignedTo": "hr@nexgenai.com",
+      "order": 3
+    },
+    {
+      "stageType": "TECHNICAL_INTERVIEW",
+      "name": "Entretien technique",
+      "description": "Entretien technique de 60 minutes avec le lead développeur (revue de code, architecture).",
+      "assignedTo": "tech.lead@nexgenai.com",
+      "order": 4
+    }
+  ]
+}
