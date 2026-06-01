@@ -232,6 +232,7 @@ public class CandidateController {
                     .data(objectMapper.writeValueAsString(Map.of("error", "No CV uploaded"))));
                 emitter.complete();
             } catch (Exception ignored) { // intentionally empty
+            }
             return emitter;
         }
 

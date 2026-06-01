@@ -50,7 +50,7 @@ public class HrService {
 
     private static final String STATUS_PENDING  = "PENDING";
     private static final String STATUS_ACCEPTED = "ACCEPTED";
-    private static final String CANDIDATE_APPLICATIONS_PATH = CANDIDATE_APPLICATIONS_PATH;
+    private static final String CANDIDATE_APPLICATIONS_PATH = "/candidate/applications";
 
     // ═══════════════════════════════════════════════════════════════════════════
     // APPLICANTS — List & Detail (from old HrService)

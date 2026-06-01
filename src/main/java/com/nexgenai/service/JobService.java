@@ -274,12 +274,12 @@ public class JobService {
         }
     }
 
-    private void validatePrerequisite(CreateJobRequest.PrerequisiteRequest p) {
+    private void validatePrerequisite(CreateJobRequest.PrerequisiteDTO p) {
         if (p.getValue() == null || p.getValue().isBlank())
             throw new IllegalArgumentException("Chaque prérequis doit avoir une valeur non nulle");
     }
 
-    private void validateWorkflowStage(CreateJobRequest.WorkflowStageRequest stage) {
+    private void validateWorkflowStage(CreateJobRequest.WorkflowStageDTO stage) {
         boolean needsAssignee = stage.getStageType() != null
                 && HUMAN_STAGE_TYPES.contains(stage.getStageType());
         boolean missingAssignee = stage.getAssigneeId() == null || stage.getAssigneeId().isBlank();
@@ -417,6 +417,56 @@ public class JobService {
     }
 
     private WorkflowStage buildWorkflowStage(CreateJobRequest.WorkflowStageDTO w) {
+        WorkflowStage stage = new WorkflowStage();
+        stage.setStageType(w.getStageType());
+        stage.setName(w.getName());
+        stage.setDescription(w.getDescription());
+        stage.setAssignedTo(w.getAssignedTo());
+        stage.setAssigneeId(w.getAssigneeId());
+        stage.setStageOrder(w.getOrder());
+        stage.setAssessmentId(w.getAssessmentId());
+        return stage;
+    }
+
+    // ── Overloads for UpdateJobRequest DTOs (same structure as CreateJobRequest) ─
+
+    private Prerequisite buildPrerequisite(UpdateJobRequest.PrerequisiteDTO p) {
+        Prerequisite prereq = new Prerequisite();
+        prereq.setType(p.getType());
+        prereq.setValue(p.getValue());
+        prereq.setObligatory(p.getObligatory());
+        prereq.setWeight(p.getWeight() != null && p.getWeight() > 0 ? p.getWeight() : 100);
+        prereq.setIcon(p.getIcon());
+        prereq.setCustomType(p.getCustomType());
+        if (p.getOptions() != null) prereq.setOptions(String.join(",", p.getOptions()));
+        prereq.setInstruction(p.getInstruction());
+        prereq.setJsonSchema(p.getJsonSchema());
+        return prereq;
+    }
+
+    private TechnicalSkill buildTechnicalSkill(UpdateJobRequest.TechnicalSkillDTO s) {
+        TechnicalSkill skill = new TechnicalSkill();
+        skill.setName(s.getName());
+        skill.setObligatory(s.getObligatory());
+        skill.setWeight(s.getWeight());
+        skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+        return skill;
+    }
+
+    private Assessment buildAssessment(UpdateJobRequest.AssessmentDTO a) {
+        Assessment assessment = new Assessment();
+        assessment.setName(a.getName());
+        assessment.setType(a.getType());
+        assessment.setDuration(a.getDuration());
+        assessment.setPassingScore(a.getPassingScore());
+        assessment.setAssigneeId(a.getAssigneeId());
+        assessment.setAssigneeName(a.getAssigneeName());
+        assessment.setSubmissionDeadline(a.getSubmissionDeadline());
+        assessment.setLinkId(a.getLinkId());
+        return assessment;
+    }
+
+    private WorkflowStage buildWorkflowStage(UpdateJobRequest.WorkflowStageDTO w) {
         WorkflowStage stage = new WorkflowStage();
         stage.setStageType(w.getStageType());
         stage.setName(w.getName());

@@ -101,12 +101,9 @@ public class CvMatchingService {
 
         // ── Chargement CV depuis le disque si non fourni ──────────────────────
         if (cvBytes == null || cvBytes.length == 0) {
-            cvBytes   = lireCvDuDisque(candidat);
             cvFilename = nomFichierCv(candidat);
         }
-        if (cvBytes == null || cvBytes.length == 0) {
-            throw new IllegalStateException("Aucun CV disponible pour ce candidat.");
-        }
+        cvBytes = resolverBytesCV(candidat, cvBytes, cvFilename);
 
         // ── Cache : même CV + même poste → rapport existant (avant appel Python) ──
         String cvHash = md5(cvBytes);
@@ -119,20 +116,7 @@ public class CvMatchingService {
         Optional<MatchingReport> cached = reportRepository
             .findByJobIdAndCandidateIdAndCvHash(jobId, candidateId, cvHash);
         if (cached.isPresent()) {
-            log.info("⚡ Rapport en cache retourné (CV inchangé) — Python non appelé");
-            MatchingReport r = cached.get();
-            // Ensure job_matches stays in sync (may be empty on first run after migration)
-            if (!jobMatchRepository.existsByCandidateIdAndJobIdAndCvHash(candidateId, jobId, cvHash)) {
-                JobMatch jm = jobMatchRepository
-                    .findByCandidateIdAndJobId(candidateId, jobId)
-                    .orElse(JobMatch.builder().candidateId(candidateId).jobId(jobId).build());
-                jm.setScore((int) Math.round(r.getScoreGlobal()));
-                jm.setVerdict(r.getRecommendation());
-                jm.setCvHash(cvHash);
-                jm.setComputedAt(r.getComputedAt());
-                jobMatchRepository.save(jm);
-            }
-            return deserialiserRapport(r, jobAvecSkills, candidat);
+            return syncerCacheRapport(cached.get(), jobAvecSkills, candidat, candidateId, jobId, cvHash);
         }
 
         log.info("🎯 Matching sémantique : {} ↔ {}", candidat.getEmail(), jobAvecSkills.getTitle());
@@ -173,55 +157,20 @@ public class CvMatchingService {
             jobAvecSkills.getTechnicalSkills(), skillsEvalues
         );
 
-        // ── 4a. Rejet forcé — skill obligatoire non satisfait (Contrainte 2) ──
-        Optional<SkillMatchResult> rejetSkill = resultatsSkills.stream()
-            .filter(r -> r.isObligatoire() && r.getSimilarite() < seuilPartiel)
-            .findFirst();
-
         // ── 5. Scoring des prérequis ──────────────────────────────────────────
         List<PrerequisiteMatchResult> resultatsPrereqs = scorerPrerequisites(
             jobAvecPrereqs.getPrerequisites(), prereqsEvalues
         );
 
-        // ── 4b. Rejet forcé — prérequis obligatoire non satisfait (Contrainte 3) ──
-        Optional<PrerequisiteMatchResult> rejetPrereq = resultatsPrereqs.stream()
-            .filter(r -> r.isObligatoire() && r.getScoreMatch() < 0.40)
-            .findFirst();
-
-        boolean forceRejet    = rejetSkill.isPresent() || rejetPrereq.isPresent();
-        String  forceRejetRaison = null;
-        if (rejetSkill.isPresent()) {
-            forceRejetRaison = "Compétence obligatoire manquante : " + rejetSkill.get().getNom();
-        } else if (rejetPrereq.isPresent()) {
-            forceRejetRaison = "Prérequis obligatoire non satisfait : "
-                + rejetPrereq.get().getType() + " — " + rejetPrereq.get().getRequis();
-        }
+        // ── 4a+4b. Rejet forcé — skill/prérequis obligatoire non satisfait ────
+        String  forceRejetRaison = detecterRaisonRejet(resultatsSkills, resultatsPrereqs);
+        boolean forceRejet       = forceRejetRaison != null;
 
         // ── 6. Score global ───────────────────────────────────────────────────
-        // Partition skills by type for weighted sub-scores
-        List<SkillMatchResult> techResults = resultatsSkills.stream()
-            .filter(r -> !"SOFT".equalsIgnoreCase(r.getSkillType()))
-            .toList();
-        List<SkillMatchResult> softResults = resultatsSkills.stream()
-            .filter(r -> "SOFT".equalsIgnoreCase(r.getSkillType()))
-            .toList();
-
-        double scoreTech = calculerScoreSkills(techResults);
-        double scoreSoft = calculerScoreSkills(softResults);
-
-        int wTech  = jobAvecSkills.getTechnicalSkillWeight() != null ? jobAvecSkills.getTechnicalSkillWeight() : 60;
-        int wSoft  = jobAvecSkills.getSoftSkillWeight()      != null ? jobAvecSkills.getSoftSkillWeight()      : 40;
-
-        double scoreSkills;
-        if (techResults.isEmpty() && !softResults.isEmpty()) {
-            scoreSkills = scoreSoft;
-        } else if (softResults.isEmpty() && !techResults.isEmpty()) {
-            scoreSkills = scoreTech;
-        } else if (!techResults.isEmpty() && !softResults.isEmpty()) {
-            scoreSkills = arrondir((scoreTech * wTech + scoreSoft * wSoft) / (wTech + wSoft));
-        } else {
-            scoreSkills = 0.0;
-        }
+        double[] scores    = calculerScoreSkillsPondere(jobAvecSkills, resultatsSkills);
+        double scoreTech   = scores[0];
+        double scoreSoft   = scores[1];
+        double scoreSkills = scores[2];
 
         double scorePrerequisite = calculerScorePrerequisites(resultatsPrereqs);
         // Poids définis par le RH lors de la création du poste (défaut 70/30)
@@ -448,6 +397,70 @@ public class CvMatchingService {
         return "A_ETUDIER";
     }
 
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Helpers extraits de lancerMatching
+    // ═════════════════════════════════════════════════════════════════════════
+
+    private byte[] resolverBytesCV(Candidate candidat, byte[] cvBytes, String cvFilename) {
+        if (cvBytes != null && cvBytes.length > 0) return cvBytes;
+        byte[] fromDisk = lireCvDuDisque(candidat);
+        if (fromDisk == null || fromDisk.length == 0)
+            throw new IllegalStateException("Aucun CV disponible pour ce candidat.");
+        return fromDisk;
+    }
+
+    private MatchingReportDTO syncerCacheRapport(MatchingReport r, Job jobAvecSkills,
+            Candidate candidat, String candidateId, String jobId, String cvHash) {
+        log.info("⚡ Rapport en cache retourné (CV inchangé) — Python non appelé");
+        if (!jobMatchRepository.existsByCandidateIdAndJobIdAndCvHash(candidateId, jobId, cvHash)) {
+            JobMatch jm = jobMatchRepository
+                .findByCandidateIdAndJobId(candidateId, jobId)
+                .orElse(JobMatch.builder().candidateId(candidateId).jobId(jobId).build());
+            jm.setScore((int) Math.round(r.getScoreGlobal()));
+            jm.setVerdict(r.getRecommendation());
+            jm.setCvHash(cvHash);
+            jm.setComputedAt(r.getComputedAt());
+            jobMatchRepository.save(jm);
+        }
+        return deserialiserRapport(r, jobAvecSkills, candidat);
+    }
+
+    private String detecterRaisonRejet(List<SkillMatchResult> resultatsSkills,
+                                       List<PrerequisiteMatchResult> resultatsPrereqs) {
+        Optional<SkillMatchResult> rejetSkill = resultatsSkills.stream()
+            .filter(r -> r.isObligatoire() && r.getSimilarite() < seuilPartiel).findFirst();
+        if (rejetSkill.isPresent())
+            return "Compétence obligatoire manquante : " + rejetSkill.get().getNom();
+        Optional<PrerequisiteMatchResult> rejetPrereq = resultatsPrereqs.stream()
+            .filter(r -> r.isObligatoire() && r.getScoreMatch() < 0.40).findFirst();
+        if (rejetPrereq.isPresent())
+            return "Prérequis obligatoire non satisfait : "
+                + rejetPrereq.get().getType() + " — " + rejetPrereq.get().getRequis();
+        return null;
+    }
+
+    private double[] calculerScoreSkillsPondere(Job job, List<SkillMatchResult> resultatsSkills) {
+        List<SkillMatchResult> techResults = resultatsSkills.stream()
+            .filter(r -> !"SOFT".equalsIgnoreCase(r.getSkillType())).toList();
+        List<SkillMatchResult> softResults = resultatsSkills.stream()
+            .filter(r -> "SOFT".equalsIgnoreCase(r.getSkillType())).toList();
+        double scoreTech = calculerScoreSkills(techResults);
+        double scoreSoft = calculerScoreSkills(softResults);
+        int wTech = job.getTechnicalSkillWeight() != null ? job.getTechnicalSkillWeight() : 60;
+        int wSoft = job.getSoftSkillWeight()      != null ? job.getSoftSkillWeight()      : 40;
+        double scoreSkills;
+        if (techResults.isEmpty() && !softResults.isEmpty()) {
+            scoreSkills = scoreSoft;
+        } else if (softResults.isEmpty() && !techResults.isEmpty()) {
+            scoreSkills = scoreTech;
+        } else if (!techResults.isEmpty()) {
+            scoreSkills = arrondir((scoreTech * wTech + scoreSoft * wSoft) / (wTech + wSoft));
+        } else {
+            scoreSkills = 0.0;
+        }
+        return new double[]{scoreTech, scoreSoft, scoreSkills};
+    }
 
     // ═════════════════════════════════════════════════════════════════════════
     // Lecture CV depuis le disque (candidat sans upload à la volée)

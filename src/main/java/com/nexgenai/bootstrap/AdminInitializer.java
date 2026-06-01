@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 @Slf4j
 public class AdminInitializer implements CommandLineRunner {
 
-    private static final String SEPARATOR = SEPARATOR;
+    private static final String SEPARATOR = "============================================";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;

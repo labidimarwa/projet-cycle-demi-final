@@ -286,10 +286,10 @@ public class InterviewService {
         Set<LocalDate> blockedDates = getBlockedDatesForPhase(interview);
 
         // Generate ordered time slots (one per "round"; each round fills all parallel slots)
+        SlotConfig slotCfg = new SlotConfig(duration, perDay, dayStart, dayEnd, excludedRanges);
         List<LocalDateTime> rounds = generateRounds(
                 interview.getStartDate(), interview.getEndDate(),
-                duration, perDay, dayStart, dayEnd,
-                excludedRanges, blockedDates);
+                slotCfg, blockedDates);
 
         // Preload assignee names
         Map<String, String> assigneeNames = loadAssigneeNames(assigneeIds);
@@ -390,27 +390,7 @@ public class InterviewService {
         Set<LocalDate> blockedDates = getBlockedDatesForPhase(interview);
 
         // Find the actual start date (respecting phase constraints)
-        LocalDate startDate = desiredStart != null ? desiredStart : LocalDate.now();
-
-        // For Technical: must be after RH end
-        if (interview.getStageType() == StageType.TECHNICAL_INTERVIEW) {
-            List<Interview> rhList = interviewRepository.findByJobIdAndStageType(
-                    interview.getJobId(), StageType.RH_INTERVIEW);
-            if (!rhList.isEmpty() && rhList.get(0).getComputedEndDateTime() != null) {
-                LocalDate minStart = rhList.get(0).getComputedEndDateTime().toLocalDate().plusDays(1);
-                if (startDate.isBefore(minStart)) startDate = minStart;
-            }
-        }
-
-        // For Admin: must be after Technical end
-        if (interview.getStageType() == StageType.ADMIN_INTERVIEW) {
-            List<Interview> techList = interviewRepository.findByJobIdAndStageType(
-                    interview.getJobId(), StageType.TECHNICAL_INTERVIEW);
-            if (!techList.isEmpty() && techList.get(0).getComputedEndDateTime() != null) {
-                LocalDate minStart = techList.get(0).getComputedEndDateTime().toLocalDate().plusDays(1);
-                if (startDate.isBefore(minStart)) startDate = minStart;
-            }
-        }
+        LocalDate startDate = ajusterDateDebutPhase(interview, desiredStart);
 
         LocalDate suggestedEnd = computeEndDate(startDate, daysNeeded, blockedDates);
 
@@ -630,54 +610,73 @@ public class InterviewService {
         LocalDate startDate = interview.getStartDate();
 
         if (interview.getStageType() == StageType.TECHNICAL_INTERVIEW) {
-            // Start date must be after RH computed end
-            List<Interview> rhList = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
-            if (!rhList.isEmpty()) {
-                Interview rh = rhList.get(0);
-                if (rh.getComputedEndDateTime() != null) {
-                    LocalDate rhEndDate = rh.getComputedEndDateTime().toLocalDate();
-                    if (!startDate.isAfter(rhEndDate)) {
-                        throw new IllegalStateException(
-                                "Technical interview cannot start on " + startDate +
-                                " — RH phase ends on " + rhEndDate + ". Choose a start date after " + rhEndDate);
-                    }
-                }
-
-                // Check no Technical date overlaps with RH dates
-                List<LocalDate> rhDates = slotRepository.findOccupiedDatesByInterviewIds(
-                        List.of(rh.getId()));
-                if (startDate != null && rhDates.contains(startDate)) {
-                    throw new IllegalStateException(
-                            "Date " + startDate + " is already used by the RH interview phase");
-                }
-            }
+            validateTechnicalStartDate(jobId, startDate);
         }
 
         if (interview.getStageType() == StageType.ADMIN_INTERVIEW) {
-            List<Interview> rhList   = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
-            List<Interview> techList = interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW);
+            validateAdminStartDate(jobId, startDate);
+        }
+    }
 
-            // Start date after Technical end
-            if (!techList.isEmpty() && techList.get(0).getComputedEndDateTime() != null) {
-                LocalDate techEnd = techList.get(0).getComputedEndDateTime().toLocalDate();
-                if (!startDate.isAfter(techEnd)) {
-                    throw new IllegalStateException(
-                            "Admin interview cannot start on " + startDate +
-                            " — Technical phase ends on " + techEnd);
-                }
+    private LocalDate ajusterDateDebutPhase(Interview interview, LocalDate desiredStart) {
+        LocalDate startDate = desiredStart != null ? desiredStart : LocalDate.now();
+        if (interview.getStageType() == StageType.TECHNICAL_INTERVIEW) {
+            List<Interview> rhList = interviewRepository.findByJobIdAndStageType(
+                    interview.getJobId(), StageType.RH_INTERVIEW);
+            if (!rhList.isEmpty() && rhList.get(0).getComputedEndDateTime() != null) {
+                LocalDate minStart = rhList.get(0).getComputedEndDateTime().toLocalDate().plusDays(1);
+                if (startDate.isBefore(minStart)) startDate = minStart;
             }
+        }
+        if (interview.getStageType() == StageType.ADMIN_INTERVIEW) {
+            List<Interview> techList = interviewRepository.findByJobIdAndStageType(
+                    interview.getJobId(), StageType.TECHNICAL_INTERVIEW);
+            if (!techList.isEmpty() && techList.get(0).getComputedEndDateTime() != null) {
+                LocalDate minStart = techList.get(0).getComputedEndDateTime().toLocalDate().plusDays(1);
+                if (startDate.isBefore(minStart)) startDate = minStart;
+            }
+        }
+        return startDate;
+    }
 
-            // No overlap with RH or Technical dates
-            List<String> previousIds = new ArrayList<>();
-            rhList.forEach(i -> previousIds.add(i.getId()));
-            techList.forEach(i -> previousIds.add(i.getId()));
+    private void validateTechnicalStartDate(String jobId, LocalDate startDate) {
+        List<Interview> rhList = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
+        if (rhList.isEmpty()) return;
+        Interview rh = rhList.get(0);
+        if (rh.getComputedEndDateTime() != null) {
+            LocalDate rhEndDate = rh.getComputedEndDateTime().toLocalDate();
+            if (!startDate.isAfter(rhEndDate)) {
+                throw new IllegalStateException(
+                        "Technical interview cannot start on " + startDate +
+                        " — RH phase ends on " + rhEndDate + ". Choose a start date after " + rhEndDate);
+            }
+        }
+        List<LocalDate> rhDates = slotRepository.findOccupiedDatesByInterviewIds(List.of(rh.getId()));
+        if (startDate != null && rhDates.contains(startDate)) {
+            throw new IllegalStateException(
+                    "Date " + startDate + " is already used by the RH interview phase");
+        }
+    }
 
-            if (!previousIds.isEmpty()) {
-                List<LocalDate> occupied = slotRepository.findOccupiedDatesByInterviewIds(previousIds);
-                if (occupied.contains(startDate)) {
-                    throw new IllegalStateException(
-                            "Date " + startDate + " is already used by a previous interview phase");
-                }
+    private void validateAdminStartDate(String jobId, LocalDate startDate) {
+        List<Interview> rhList   = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
+        List<Interview> techList = interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW);
+        if (!techList.isEmpty() && techList.get(0).getComputedEndDateTime() != null) {
+            LocalDate techEnd = techList.get(0).getComputedEndDateTime().toLocalDate();
+            if (!startDate.isAfter(techEnd)) {
+                throw new IllegalStateException(
+                        "Admin interview cannot start on " + startDate +
+                        " — Technical phase ends on " + techEnd);
+            }
+        }
+        List<String> previousIds = new ArrayList<>();
+        rhList.forEach(i -> previousIds.add(i.getId()));
+        techList.forEach(i -> previousIds.add(i.getId()));
+        if (!previousIds.isEmpty()) {
+            List<LocalDate> occupied = slotRepository.findOccupiedDatesByInterviewIds(previousIds);
+            if (occupied.contains(startDate)) {
+                throw new IllegalStateException(
+                        "Date " + startDate + " is already used by a previous interview phase");
             }
         }
     }
@@ -691,17 +690,18 @@ public class InterviewService {
      * Each round corresponds to one time slot during which all assignees can interview simultaneously.
      * Blocked dates (from previous phases) are skipped entirely.
      */
+    private record SlotConfig(int duration, int maxRoundsPerDay,
+                              String dayStart, String dayEnd, List<String> excludedRanges) {}
+
     private List<LocalDateTime> generateRounds(
             LocalDate start, LocalDate end,
-            int durationMinutes, int maxRoundsPerDay,
-            String dayStartStr, String dayEndStr,
-            List<String> excludedRanges,
-            Set<LocalDate> blockedDates) {
-
+            SlotConfig cfg, Set<LocalDate> blockedDates) {
+        int durationMinutes = cfg.duration();
+        int maxRoundsPerDay = cfg.maxRoundsPerDay();
         List<LocalDateTime> rounds   = new ArrayList<>();
-        List<LocalTime[]>   excluded = parseExcludedRanges(excludedRanges);
-        LocalTime dayStart = parseTime(dayStartStr, LocalTime.of(9, 0));
-        LocalTime dayEnd   = parseTime(dayEndStr,   LocalTime.of(18, 0));
+        List<LocalTime[]>   excluded = parseExcludedRanges(cfg.excludedRanges());
+        LocalTime dayStart = parseTime(cfg.dayStart(), LocalTime.of(9, 0));
+        LocalTime dayEnd   = parseTime(cfg.dayEnd(),   LocalTime.of(18, 0));
 
         LocalDate current = start;
         while (!current.isAfter(end)) {

@@ -78,22 +78,7 @@ public class AssessmentCrudService {
             }
 
             for (Assessment a : assessments) {
-                String stageTypeName = null;
-                if (a.getWorkflowStageId() != null && job.getWorkflowStages() != null) {
-                    stageTypeName = job.getWorkflowStages().stream()
-                        .filter(s -> s.getId().equals(a.getWorkflowStageId()))
-                        .map(s -> s.getStageType() != null ? s.getStageType().name() : null)
-                        .findFirst().orElse(null);
-                }
-                allTests.add(TestSummaryResponse.builder()
-                    .id(a.getId()).name(a.getName()).description(a.getDescription())
-                    .status(a.getStatus().name())
-                    .themesCount(a.getThemes() != null ? a.getThemes().size() : 0)
-                    .questionsCount(countAllQuestions(a))
-                    .candidatesCount(testSessionRepository.countByAssessmentId(a.getId()))
-                    .completionRate(0)
-                    .createdAt(a.getCreatedAt() != null ? a.getCreatedAt().toString() : null)
-                    .stageType(stageTypeName).source("ASSESSMENT").build());
+                allTests.add(buildTestSummaryResponse(job, a));
             }
 
             if (!allTests.isEmpty()) {
@@ -220,16 +205,7 @@ public class AssessmentCrudService {
         assessment = findAssessment(assessmentId);
 
         for (SaveFullTestRequest.ThemePayload thPayload : req.getThemes()) {
-            TestTheme theme = resolveOrCreateTheme(thPayload, assessment);
-            if (theme == null) continue;
-            questionRepository.deleteByThemeId(theme.getId());
-            if (thPayload.getQuestions() != null) {
-                int order = 0;
-                for (SaveFullTestRequest.QuestionPayload qp : thPayload.getQuestions()) {
-                    qp.setOrderIndex(order++);
-                    questionRepository.save(buildQuestion(qp, theme, thPayload.getType()));
-                }
-            }
+            processThemePayload(thPayload, assessment);
         }
         return mapAssessmentFull(assessmentRepository.save(assessment));
     }
@@ -618,6 +594,37 @@ public class AssessmentCrudService {
             if (qp.getLikertPoints() != null) builder.likertPoints(qp.getLikertPoints());
         }
         return builder.build();
+    }
+
+    private TestSummaryResponse buildTestSummaryResponse(Job job, Assessment a) {
+        String stageTypeName = null;
+        if (a.getWorkflowStageId() != null && job.getWorkflowStages() != null) {
+            stageTypeName = job.getWorkflowStages().stream()
+                .filter(s -> s.getId().equals(a.getWorkflowStageId()))
+                .map(s -> s.getStageType() != null ? s.getStageType().name() : null)
+                .findFirst().orElse(null);
+        }
+        return TestSummaryResponse.builder()
+            .id(a.getId()).name(a.getName()).description(a.getDescription())
+            .status(a.getStatus().name())
+            .themesCount(a.getThemes() != null ? a.getThemes().size() : 0)
+            .questionsCount(countAllQuestions(a))
+            .candidatesCount(testSessionRepository.countByAssessmentId(a.getId()))
+            .completionRate(0)
+            .createdAt(a.getCreatedAt() != null ? a.getCreatedAt().toString() : null)
+            .stageType(stageTypeName).source("ASSESSMENT").build();
+    }
+
+    private void processThemePayload(SaveFullTestRequest.ThemePayload thPayload, Assessment assessment) {
+        TestTheme theme = resolveOrCreateTheme(thPayload, assessment);
+        if (theme == null) return;
+        questionRepository.deleteByThemeId(theme.getId());
+        if (thPayload.getQuestions() == null) return;
+        int order = 0;
+        for (SaveFullTestRequest.QuestionPayload qp : thPayload.getQuestions()) {
+            qp.setOrderIndex(order++);
+            questionRepository.save(buildQuestion(qp, theme, thPayload.getType()));
+        }
     }
 
     private TestTheme resolveOrCreateTheme(SaveFullTestRequest.ThemePayload thPayload, Assessment assessment) {

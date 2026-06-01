@@ -1,4 +1,4 @@
-﻿package com.nexgenai.service;
+package com.nexgenai.service;
 
 import com.nexgenai.dto.hr.AnswerDecisionRequest;
 import com.nexgenai.dto.hr.AnswerDecisionResponse;
@@ -619,16 +619,22 @@ public class TestSessionService {
                 questions = questionRepository.findByIdIn(new ArrayList<>(byQuestion.keySet()));
 
             for (Question q : questions) {
-                int maxPts = q.getPoints() != null ? q.getPoints() : 0;
-                TestSessionAnswer saved = byQuestion.get(q.getId());
-                int earned = estimateEarned(q, saved);
-                results.add(AntiCheatReportDto.QuestionResult.builder()
-                    .questionId(q.getId()).title(q.getTitle() != null ? q.getTitle() : "Question")
-                    .type(q.getKind() != null ? q.getKind().name() : "QCM")
-                    .earnedPoints(earned).maxPoints(maxPts).build());
+                addAntiCheatResult(q, byQuestion, results);
             }
         }
         return results;
+    }
+
+    private void addAntiCheatResult(Question q, Map<String, TestSessionAnswer> byQuestion,
+            List<AntiCheatReportDto.QuestionResult> results) {
+        int maxPts = q.getPoints() != null ? q.getPoints() : 0;
+        TestSessionAnswer saved = byQuestion.get(q.getId());
+        int earned = estimateEarned(q, saved);
+        String title = q.getTitle() != null ? q.getTitle() : "Question";
+        String type  = q.getKind()  != null ? q.getKind().name() : "QCM";
+        results.add(AntiCheatReportDto.QuestionResult.builder()
+            .questionId(q.getId()).title(title).type(type)
+            .earnedPoints(earned).maxPoints(maxPts).build());
     }
 
     private int estimateEarned(Question q, TestSessionAnswer saved) {

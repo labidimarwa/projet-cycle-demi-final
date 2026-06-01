@@ -22,6 +22,7 @@ import java.util.*;
  * TechnicalSession, and SimpleQuestion types.
  */
 @Service
+@Slf4j
 public class EvaluatorService {
 
     private final TechEvaluatorRepository techEvaluatorRepository;

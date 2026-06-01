@@ -292,8 +292,8 @@ public class CodeExecutionService {
             double da = Double.parseDouble(a);
             double de = Double.parseDouble(e);
             return Math.abs(da - de) < 1e-6;
-        } catch (NumberFormatException e) {
-            log.trace("Not numeric, falling through to line comparison: {}", e.getMessage());
+        } catch (NumberFormatException nfe) {
+            log.trace("Not numeric, falling through to line comparison: {}", nfe.getMessage());
         }
 
         // Try line-by-line comparison

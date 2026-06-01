@@ -106,111 +106,13 @@ public class AssessmentResultsService {
             .orElseThrow(() -> new RuntimeException("RH session not found"));
         Candidate candidate = session.getCandidate();
 
-        Map<String, String> answerMap = new HashMap<>();
-        for (TestSessionAnswer a : sessionAnswerRepository.findBySessionId(session.getId())) {
-            if (!a.getSelectedOptionIds().isEmpty())
-                answerMap.put(a.getQuestionId(), a.getSelectedOptionIds().get(0));
-        }
+        Map<String, String> answerMap = buildRhAnswerMap(session.getId());
 
         List<ThemeResultResponse>  themeResults    = new ArrayList<>();
         List<ModelAnswersResponse> modelAnswersList = new ArrayList<>();
 
         for (TestTheme theme : assessment.getThemes()) {
-            List<ThemeModelResultResponse> modelResults = new ArrayList<>();
-            int themeTotal = 0;
-            int themeMax = 0;
-
-            for (ThemeModel tm : theme.getThemeModels()) {
-                Map<String, ModelDimension> dimById = tm.getModel().getDimensions().stream()
-                    .collect(Collectors.toMap(ModelDimension::getId, d -> d));
-
-                Map<String, Integer> dimScores = new HashMap<>();
-                Map<String, Integer> dimMaxMap = new HashMap<>();
-                for (ModelDimension d : tm.getModel().getDimensions()) {
-                    dimScores.put(d.getId(), 0);
-                    dimMaxMap.put(d.getId(), 0);
-                }
-
-                int modelEarned = 0;
-                int modelMaxPts = 0;
-                int answered = 0;
-                List<QuestionAnswerResponse> questionDetails = new ArrayList<>();
-
-                for (Question q : tm.getQuestions()) {
-                    String selectedOptionId = answerMap.get(q.getId());
-                    int qEarned = 0;
-                    List<QcmOptionAnswerResponse> optionResponses = new ArrayList<>();
-
-                    for (QuestionOption opt : q.getOptions()) {
-                        boolean selected = opt.getId() != null && opt.getId().equals(selectedOptionId);
-                        int pts = opt.getPoints() != null ? opt.getPoints() : 0;
-
-                        if (pts > 0 && opt.getDimensionId() != null) {
-                            dimMaxMap.merge(opt.getDimensionId(), pts, Integer::sum);
-                            modelMaxPts += pts;
-                        }
-                        if (selected) {
-                            if (opt.getDimensionId() != null) dimScores.merge(opt.getDimensionId(), pts, Integer::sum);
-                            modelEarned += pts; qEarned += pts; answered++;
-                        }
-
-                        ModelDimension dimObj = opt.getDimensionId() != null ? dimById.get(opt.getDimensionId()) : null;
-                        optionResponses.add(QcmOptionAnswerResponse.builder()
-                            .id(opt.getId()).text(opt.getText()).isCorrect(false).points(pts)
-                            .selected(selected).dimensionId(opt.getDimensionId())
-                            .dimensionName(dimObj != null ? dimObj.getName() : null)
-                            .optionText(opt.getText()).build());
-                    }
-
-                    int maxPts = q.getOptions().stream().mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
-                    String imageUrl = q.getImagePath() != null
-                        ? baseUrl + "/api/v1/job-tests/questions/" + q.getId() + "/image" : null;
-
-                    questionDetails.add(QuestionAnswerResponse.builder()
-                        .questionId(q.getId()).title("").statement(q.getText()).type("QCM")
-                        .questionType("RADIO").points(maxPts).earnedPoints(qEarned)
-                        .orderIndex(q.getOrderIndex() != null ? q.getOrderIndex() : 0)
-                        .imageUrl(imageUrl).options(optionResponses)
-                        .likertPoints(List.of()).testCases(List.of())
-                        .answerDecision(null).answerNote(null).manualPoints(null).build());
-                }
-
-                themeTotal += modelEarned; themeMax += modelMaxPts;
-
-                modelAnswersList.add(ModelAnswersResponse.builder()
-                    .themeModelId(tm.getId()).modelName(tm.getModel().getName())
-                    .questions(questionDetails).build());
-
-                List<DimensionScoreResponse> dimResponses = tm.getModel().getDimensions().stream()
-                    .sorted(Comparator.comparingInt(d -> d.getOrderIndex() != null ? d.getOrderIndex() : 0))
-                    .map(d -> {
-                        int ds = dimScores.getOrDefault(d.getId(), 0);
-                        int dm = dimMaxMap.getOrDefault(d.getId(), 0);
-                        double pct = dm > 0 ? Math.round((double) ds / dm * 1000.0) / 10.0 : 0.0;
-                        return DimensionScoreResponse.builder()
-                            .dimensionId(d.getId()).dimensionName(d.getName())
-                            .dimensionCode(d.getCode()).color(d.getColor())
-                            .score(ds).maxScore(dm).percentage(pct).build();
-                    }).toList();
-
-                double modelPct = modelMaxPts > 0
-                    ? Math.round((double) modelEarned / modelMaxPts * 1000.0) / 10.0 : 0.0;
-
-                modelResults.add(ThemeModelResultResponse.builder()
-                    .themeModelId(tm.getId()).modelId(tm.getModel().getId())
-                    .modelName(tm.getModel().getName()).scoringType(tm.getModel().getScoringType().name())
-                    .weight(tm.getWeight() != null ? tm.getWeight() : 50)
-                    .totalScore(modelEarned).maxScore(modelMaxPts).percentage(modelPct)
-                    .questionsCount(tm.getQuestions().size()).answeredCount(answered)
-                    .dimensions(dimResponses).build());
-            }
-
-            double themePct = themeMax > 0 ? Math.round((double) themeTotal / themeMax * 1000.0) / 10.0 : 0.0;
-            themeResults.add(ThemeResultResponse.builder()
-                .themeId(theme.getId()).themeName(theme.getName())
-                .themeCategory(theme.getCategory() != null ? theme.getCategory().name() : "CUSTOM")
-                .totalScore(themeTotal).maxScore(themeMax).percentage(themePct)
-                .models(modelResults).build());
+            themeResults.add(processRhTheme(theme, answerMap, modelAnswersList));
         }
 
         List<TestSession> allCompleted = completedSorted(assessmentId);
@@ -288,66 +190,9 @@ public class AssessmentResultsService {
                 .stream().collect(Collectors.toMap(TestSessionAnswerDecision::getQuestionId, d -> d));
 
         List<ThemeAnswersResponse> themeAnswers = new ArrayList<>();
-        int totalEarned = 0;
-        int totalMax = 0;
-
-        if (!answersMap.isEmpty()) {
-            List<Question> questions = questionRepository.findByIdIn(new ArrayList<>(answersMap.keySet()));
-
-            Map<String, List<Question>> byTheme = new LinkedHashMap<>();
-            for (Question q : questions) {
-                String tid = q.getTheme() != null ? q.getTheme().getId() : "_root";
-                byTheme.computeIfAbsent(tid, k -> new ArrayList<>()).add(q);
-            }
-
-            if (byTheme.isEmpty()) {
-                int sessionEarned = session.getEarnedPoints() != null ? session.getEarnedPoints() : 0;
-                int sessionTotal  = session.getTotalPoints()  != null ? session.getTotalPoints()  : 0;
-                double pct = sessionTotal > 0
-                    ? Math.round((double) sessionEarned / sessionTotal * 1000.0) / 10.0 : 0.0;
-                themeAnswers.add(ThemeAnswersResponse.builder()
-                    .themeId(assessment.getId()).themeName(assessment.getName())
-                    .themeCategory("LOGIC").totalScore(sessionEarned).maxScore(sessionTotal).percentage(pct)
-                    .questions(Collections.emptyList()).build());
-                totalEarned = sessionEarned;
-                totalMax = sessionTotal;
-            }
-
-            for (Map.Entry<String, List<Question>> entry : byTheme.entrySet()) {
-                List<Question> themeQs = entry.getValue();
-                themeQs.sort(Comparator.comparingInt(q -> q.getOrderIndex() != null ? q.getOrderIndex() : 0));
-
-                String themeName = assessment.getName();
-                String themeCategory = "LOGIC";
-                String themeId = entry.getKey();
-                if (!themeQs.isEmpty() && themeQs.get(0).getTheme() != null) {
-                    TestTheme th = themeQs.get(0).getTheme();
-                    if (th.getName()     != null) themeName     = th.getName();
-                    if (th.getCategory() != null) themeCategory = th.getCategory().name();
-                    themeId = th.getId();
-                }
-
-                List<QuestionAnswerResponse> qResponses = new ArrayList<>();
-                int themeEarned = 0;
-                int themeMax = 0;
-                for (Question q : themeQs) {
-                    QuestionAnswerResponse qr = buildQuestionAnswerResponse(
-                            q, answersMap.get(q.getId()),
-                            decisionsMap.get(q.getId()));
-                    qResponses.add(qr);
-                    themeEarned += qr.getEarnedPoints();
-                    themeMax += qr.getPoints();
-                }
-
-                totalEarned += themeEarned; totalMax += themeMax;
-                double themePct = themeMax > 0 ? Math.round((double) themeEarned / themeMax * 1000.0) / 10.0 : 0.0;
-
-                themeAnswers.add(ThemeAnswersResponse.builder()
-                    .themeId(themeId).themeName(themeName).themeCategory(themeCategory)
-                    .totalScore(themeEarned).maxScore(themeMax).percentage(themePct)
-                    .questions(qResponses).build());
-            }
-        }
+        int[] totals = buildFullThemeAnswers(session, assessment, answersMap, decisionsMap, themeAnswers);
+        int totalEarned = totals[0];
+        int totalMax    = totals[1];
 
         int rank = completedSorted(assessmentId).indexOf(session) + 1;
         int finalEarned = session.getEarnedPoints() != null ? session.getEarnedPoints() : totalEarned;
@@ -388,50 +233,245 @@ public class AssessmentResultsService {
             .manualPoints(decision != null ? decision.getManualPoints() : null);
 
         if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING) {
-            String code     = saved != null ? saved.getSubmittedCode() : null;
-            String language = saved != null ? saved.getSubmittedLanguage() : null;
-
-            List<TestCaseAnswerResponse> tcResults = new ArrayList<>();
-            if (saved != null && !saved.getTestCaseResults().isEmpty()) {
-                for (TestCaseResult tc : saved.getTestCaseResults()) {
-                    tcResults.add(TestCaseAnswerResponse.builder()
-                        .input(tc.getInput()).expectedOutput(tc.getExpectedOutput())
-                        .actualOutput(tc.getActualOutput()).passed(tc.isPassed())
-                        .points(tc.getPoints()).earnedPoints(tc.getEarnedPoints())
-                        .executionMs(tc.getExecutionMs()).isVisible(tc.isVisible()).build());
-                }
-            } else if (q.getTestCases() != null) {
-                for (Question.TestCase tc : q.getTestCases()) {
-                    tcResults.add(TestCaseAnswerResponse.builder()
-                        .input(tc.getInput()).expectedOutput(tc.getOutput()).actualOutput(null)
-                        .passed(false).points(tc.getPoints() != null ? tc.getPoints() : 0)
-                        .earnedPoints(0).executionMs(null).isVisible(tc.isVisible()).build());
-                }
-            }
-
-            int earned = tcResults.stream().mapToInt(TestCaseAnswerResponse::getEarnedPoints).sum();
-            return b.submittedCode(code).submittedLanguage(language)
-                    .testCases(tcResults).options(Collections.emptyList()).earnedPoints(earned).build();
+            return buildProblemSolvingAnswer(b, q, saved);
         }
-
         if (q.getQuestionType() == Question.QuestionType.LIKERT) {
-            Integer selectedLikert = saved != null ? saved.getLikertValue() : null;
-            int earned = 0;
-            if (selectedLikert != null) {
-                List<Integer> lp = q.getLikertPoints();
-                int idx = selectedLikert - 1;
-                if (lp != null && idx >= 0 && idx < lp.size())
-                    earned = lp.get(idx) != null ? lp.get(idx) : 0;
+            return buildLikertAnswer(b, q, saved);
+        }
+        return buildQcmAnswer(b, q, saved);
+    }
+
+    // ── RH result helpers ────────────────────────────────────────────────────
+
+    private Map<String, String> buildRhAnswerMap(String sessionId) {
+        Map<String, String> map = new HashMap<>();
+        for (TestSessionAnswer a : sessionAnswerRepository.findBySessionId(sessionId)) {
+            if (!a.getSelectedOptionIds().isEmpty())
+                map.put(a.getQuestionId(), a.getSelectedOptionIds().get(0));
+        }
+        return map;
+    }
+
+    private ThemeResultResponse processRhTheme(TestTheme theme, Map<String, String> answerMap,
+            List<ModelAnswersResponse> modelAnswersList) {
+        List<ThemeModelResultResponse> modelResults = new ArrayList<>();
+        int themeTotal = 0;
+        int themeMax   = 0;
+        for (ThemeModel tm : theme.getThemeModels()) {
+            int[] scores = processRhThemeModel(tm, answerMap, modelAnswersList, modelResults);
+            themeTotal += scores[0];
+            themeMax   += scores[1];
+        }
+        double themePct = themeMax > 0 ? Math.round((double) themeTotal / themeMax * 1000.0) / 10.0 : 0.0;
+        return ThemeResultResponse.builder()
+            .themeId(theme.getId()).themeName(theme.getName())
+            .themeCategory(theme.getCategory() != null ? theme.getCategory().name() : "CUSTOM")
+            .totalScore(themeTotal).maxScore(themeMax).percentage(themePct)
+            .models(modelResults).build();
+    }
+
+    private int[] processRhThemeModel(ThemeModel tm, Map<String, String> answerMap,
+            List<ModelAnswersResponse> modelAnswersList, List<ThemeModelResultResponse> modelResults) {
+        Map<String, ModelDimension> dimById = tm.getModel().getDimensions().stream()
+            .collect(Collectors.toMap(ModelDimension::getId, d -> d));
+        Map<String, Integer> dimScores = new HashMap<>();
+        Map<String, Integer> dimMaxMap = new HashMap<>();
+        for (ModelDimension d : tm.getModel().getDimensions()) {
+            dimScores.put(d.getId(), 0);
+            dimMaxMap.put(d.getId(), 0);
+        }
+        int modelEarned = 0;
+        int modelMaxPts = 0;
+        int answered    = 0;
+        List<QuestionAnswerResponse> questionDetails = new ArrayList<>();
+        for (Question q : tm.getQuestions()) {
+            int[] qData = processRhQuestion(q, answerMap.get(q.getId()),
+                    dimScores, dimMaxMap, dimById, questionDetails);
+            modelEarned += qData[0]; modelMaxPts += qData[1]; answered += qData[2];
+        }
+        modelAnswersList.add(ModelAnswersResponse.builder()
+            .themeModelId(tm.getId()).modelName(tm.getModel().getName())
+            .questions(questionDetails).build());
+        List<DimensionScoreResponse> dimResponses = tm.getModel().getDimensions().stream()
+            .sorted(Comparator.comparingInt(d -> d.getOrderIndex() != null ? d.getOrderIndex() : 0))
+            .map(d -> {
+                int ds = dimScores.getOrDefault(d.getId(), 0);
+                int dm = dimMaxMap.getOrDefault(d.getId(), 0);
+                double pct = dm > 0 ? Math.round((double) ds / dm * 1000.0) / 10.0 : 0.0;
+                return DimensionScoreResponse.builder()
+                    .dimensionId(d.getId()).dimensionName(d.getName())
+                    .dimensionCode(d.getCode()).color(d.getColor())
+                    .score(ds).maxScore(dm).percentage(pct).build();
+            }).toList();
+        double modelPct = modelMaxPts > 0
+            ? Math.round((double) modelEarned / modelMaxPts * 1000.0) / 10.0 : 0.0;
+        modelResults.add(ThemeModelResultResponse.builder()
+            .themeModelId(tm.getId()).modelId(tm.getModel().getId())
+            .modelName(tm.getModel().getName()).scoringType(tm.getModel().getScoringType().name())
+            .weight(tm.getWeight() != null ? tm.getWeight() : 50)
+            .totalScore(modelEarned).maxScore(modelMaxPts).percentage(modelPct)
+            .questionsCount(tm.getQuestions().size()).answeredCount(answered)
+            .dimensions(dimResponses).build());
+        return new int[]{modelEarned, modelMaxPts};
+    }
+
+    private int[] processRhQuestion(Question q, String selectedOptionId,
+            Map<String, Integer> dimScores, Map<String, Integer> dimMaxMap,
+            Map<String, ModelDimension> dimById, List<QuestionAnswerResponse> questionDetails) {
+        int qEarned    = 0;
+        int mEarned    = 0;
+        int mMax       = 0;
+        int answeredDelta = 0;
+        List<QcmOptionAnswerResponse> optionResponses = new ArrayList<>();
+        for (QuestionOption opt : q.getOptions()) {
+            boolean selected = opt.getId() != null && opt.getId().equals(selectedOptionId);
+            int pts = opt.getPoints() != null ? opt.getPoints() : 0;
+            if (pts > 0 && opt.getDimensionId() != null) {
+                dimMaxMap.merge(opt.getDimensionId(), pts, Integer::sum);
+                mMax += pts;
             }
-            return b.options(Collections.emptyList())
-                    .likertPoints(q.getLikertPoints() != null ? q.getLikertPoints() : Collections.emptyList())
-                    .selectedLikert(selectedLikert).earnedPoints(earned).build();
+            if (selected) {
+                if (opt.getDimensionId() != null) dimScores.merge(opt.getDimensionId(), pts, Integer::sum);
+                mEarned += pts; qEarned += pts; answeredDelta++;
+            }
+            ModelDimension dimObj = opt.getDimensionId() != null ? dimById.get(opt.getDimensionId()) : null;
+            optionResponses.add(QcmOptionAnswerResponse.builder()
+                .id(opt.getId()).text(opt.getText()).isCorrect(false).points(pts)
+                .selected(selected).dimensionId(opt.getDimensionId())
+                .dimensionName(dimObj != null ? dimObj.getName() : null)
+                .optionText(opt.getText()).build());
+        }
+        int maxPts = q.getOptions().stream().mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
+        String imageUrl = q.getImagePath() != null
+            ? baseUrl + "/api/v1/job-tests/questions/" + q.getId() + "/image" : null;
+        questionDetails.add(QuestionAnswerResponse.builder()
+            .questionId(q.getId()).title("").statement(q.getText()).type("QCM")
+            .questionType("RADIO").points(maxPts).earnedPoints(qEarned)
+            .orderIndex(q.getOrderIndex() != null ? q.getOrderIndex() : 0)
+            .imageUrl(imageUrl).options(optionResponses)
+            .likertPoints(List.of()).testCases(List.of())
+            .answerDecision(null).answerNote(null).manualPoints(null).build());
+        return new int[]{mEarned, mMax, answeredDelta};
+    }
+
+    // ── Full result helpers ──────────────────────────────────────────────────
+
+    private int[] buildFullThemeAnswers(TestSession session, Assessment assessment,
+            Map<String, TestSessionAnswer> answersMap,
+            Map<String, TestSessionAnswerDecision> decisionsMap,
+            List<ThemeAnswersResponse> themeAnswers) {
+        int totalEarned = 0;
+        int totalMax    = 0;
+        if (answersMap.isEmpty()) return new int[]{totalEarned, totalMax};
+
+        List<Question> questions = questionRepository.findByIdIn(new ArrayList<>(answersMap.keySet()));
+        Map<String, List<Question>> byTheme = new LinkedHashMap<>();
+        for (Question q : questions) {
+            String tid = q.getTheme() != null ? q.getTheme().getId() : "_root";
+            byTheme.computeIfAbsent(tid, k -> new ArrayList<>()).add(q);
         }
 
-        // QCM (RADIO / CHECKBOX)
+        if (byTheme.isEmpty()) {
+            int se = session.getEarnedPoints() != null ? session.getEarnedPoints() : 0;
+            int st = session.getTotalPoints()  != null ? session.getTotalPoints()  : 0;
+            double pct = st > 0 ? Math.round((double) se / st * 1000.0) / 10.0 : 0.0;
+            themeAnswers.add(ThemeAnswersResponse.builder()
+                .themeId(assessment.getId()).themeName(assessment.getName())
+                .themeCategory("LOGIC").totalScore(se).maxScore(st).percentage(pct)
+                .questions(Collections.emptyList()).build());
+            return new int[]{se, st};
+        }
+
+        for (Map.Entry<String, List<Question>> entry : byTheme.entrySet()) {
+            int[] themeScores = processFullThemeEntry(entry, assessment, answersMap, decisionsMap, themeAnswers);
+            totalEarned += themeScores[0];
+            totalMax    += themeScores[1];
+        }
+        return new int[]{totalEarned, totalMax};
+    }
+
+    private int[] processFullThemeEntry(Map.Entry<String, List<Question>> entry, Assessment assessment,
+            Map<String, TestSessionAnswer> answersMap,
+            Map<String, TestSessionAnswerDecision> decisionsMap,
+            List<ThemeAnswersResponse> themeAnswers) {
+        List<Question> themeQs = entry.getValue();
+        themeQs.sort(Comparator.comparingInt(q -> q.getOrderIndex() != null ? q.getOrderIndex() : 0));
+
+        String themeName     = assessment.getName();
+        String themeCategory = "LOGIC";
+        String themeId       = entry.getKey();
+        if (!themeQs.isEmpty() && themeQs.get(0).getTheme() != null) {
+            TestTheme th = themeQs.get(0).getTheme();
+            if (th.getName()     != null) themeName     = th.getName();
+            if (th.getCategory() != null) themeCategory = th.getCategory().name();
+            themeId = th.getId();
+        }
+
+        List<QuestionAnswerResponse> qResponses = new ArrayList<>();
+        int themeEarned = 0;
+        int themeMax    = 0;
+        for (Question q : themeQs) {
+            QuestionAnswerResponse qr = buildQuestionAnswerResponse(
+                    q, answersMap.get(q.getId()), decisionsMap.get(q.getId()));
+            qResponses.add(qr);
+            themeEarned += qr.getEarnedPoints();
+            themeMax    += qr.getPoints();
+        }
+        double themePct = themeMax > 0 ? Math.round((double) themeEarned / themeMax * 1000.0) / 10.0 : 0.0;
+        themeAnswers.add(ThemeAnswersResponse.builder()
+            .themeId(themeId).themeName(themeName).themeCategory(themeCategory)
+            .totalScore(themeEarned).maxScore(themeMax).percentage(themePct)
+            .questions(qResponses).build());
+        return new int[]{themeEarned, themeMax};
+    }
+
+    // ── Answer type builders ─────────────────────────────────────────────────
+
+    private QuestionAnswerResponse buildProblemSolvingAnswer(
+            QuestionAnswerResponse.QuestionAnswerResponseBuilder b, Question q, TestSessionAnswer saved) {
+        String code     = saved != null ? saved.getSubmittedCode()    : null;
+        String language = saved != null ? saved.getSubmittedLanguage() : null;
+        List<TestCaseAnswerResponse> tcResults = new ArrayList<>();
+        if (saved != null && !saved.getTestCaseResults().isEmpty()) {
+            for (TestCaseResult tc : saved.getTestCaseResults()) {
+                tcResults.add(TestCaseAnswerResponse.builder()
+                    .input(tc.getInput()).expectedOutput(tc.getExpectedOutput())
+                    .actualOutput(tc.getActualOutput()).passed(tc.isPassed())
+                    .points(tc.getPoints()).earnedPoints(tc.getEarnedPoints())
+                    .executionMs(tc.getExecutionMs()).isVisible(tc.isVisible()).build());
+            }
+        } else if (q.getTestCases() != null) {
+            for (Question.TestCase tc : q.getTestCases()) {
+                tcResults.add(TestCaseAnswerResponse.builder()
+                    .input(tc.getInput()).expectedOutput(tc.getOutput()).actualOutput(null)
+                    .passed(false).points(tc.getPoints() != null ? tc.getPoints() : 0)
+                    .earnedPoints(0).executionMs(null).isVisible(tc.isVisible()).build());
+            }
+        }
+        int earned = tcResults.stream().mapToInt(TestCaseAnswerResponse::getEarnedPoints).sum();
+        return b.submittedCode(code).submittedLanguage(language)
+                .testCases(tcResults).options(Collections.emptyList()).earnedPoints(earned).build();
+    }
+
+    private QuestionAnswerResponse buildLikertAnswer(
+            QuestionAnswerResponse.QuestionAnswerResponseBuilder b, Question q, TestSessionAnswer saved) {
+        Integer selectedLikert = saved != null ? saved.getLikertValue() : null;
+        int earned = 0;
+        if (selectedLikert != null) {
+            List<Integer> lp = q.getLikertPoints();
+            int idx = selectedLikert - 1;
+            if (lp != null && idx >= 0 && idx < lp.size())
+                earned = lp.get(idx) != null ? lp.get(idx) : 0;
+        }
+        return b.options(Collections.emptyList())
+                .likertPoints(q.getLikertPoints() != null ? q.getLikertPoints() : Collections.emptyList())
+                .selectedLikert(selectedLikert).earnedPoints(earned).build();
+    }
+
+    private QuestionAnswerResponse buildQcmAnswer(
+            QuestionAnswerResponse.QuestionAnswerResponseBuilder b, Question q, TestSessionAnswer saved) {
         Set<String> selectedIds = saved != null && saved.getSelectedOptionIds() != null
                 ? new HashSet<>(saved.getSelectedOptionIds()) : Collections.emptySet();
-
         List<QcmOptionAnswerResponse> optionResponses = new ArrayList<>();
         int earned = 0;
         List<Question.QcmOption> opts = q.getQcmOptions() != null ? q.getQcmOptions() : Collections.emptyList();
@@ -443,7 +483,6 @@ public class AssessmentResultsService {
                 .id(opt.getId()).text(opt.getText()).optionText(opt.getText())
                 .isCorrect(opt.isCorrect()).points(optPts).selected(selected).build());
         }
-
         return b.options(optionResponses).earnedPoints(earned)
                 .testCases(Collections.emptyList())
                 .likertPoints(q.getLikertPoints() != null ? q.getLikertPoints() : Collections.emptyList())
