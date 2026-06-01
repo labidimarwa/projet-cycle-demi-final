@@ -47,7 +47,7 @@ public class AssessmentResultsService {
         List<TestSession> completed = sessions.stream()
             .filter(s -> s.getStatus() == TestSession.SessionStatus.COMPLETED)
             .sorted(Comparator.comparingDouble(s -> -safeScore(s)))
-            .collect(Collectors.toList());
+            .toList();
 
         List<CandidateSummaryResponse> summaries = new ArrayList<>();
         for (TestSession session : sessions) {
@@ -187,7 +187,7 @@ public class AssessmentResultsService {
                             .dimensionId(d.getId()).dimensionName(d.getName())
                             .dimensionCode(d.getCode()).color(d.getColor())
                             .score(ds).maxScore(dm).percentage(pct).build();
-                    }).collect(Collectors.toList());
+                    }).toList();
 
                 double modelPct = modelMaxPts > 0
                     ? Math.round((double) modelEarned / modelMaxPts * 1000.0) / 10.0 : 0.0;
@@ -448,7 +448,7 @@ public class AssessmentResultsService {
         return testSessionRepository.findByAssessmentId(assessmentId).stream()
             .filter(s -> s.getStatus() == TestSession.SessionStatus.COMPLETED)
             .sorted(Comparator.comparingDouble(s -> -(s.getScore() != null ? s.getScore() : 0)))
-            .collect(Collectors.toList());
+            .toList();
     }
 
     private double safeScore(TestSession s) {

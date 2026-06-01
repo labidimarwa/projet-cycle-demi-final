@@ -25,6 +25,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class CandidateService {
 
+    private static final String TECHNICAL_TYPE = "TECHNICAL";
+
     private final UserRepository                      userRepository;
     private final CandidateRepository                 candidateRepository;
     private final JobRepository                       jobRepository;
@@ -85,7 +87,8 @@ public class CandidateService {
                 if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
                 return req.getRemoteAddr();
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { // intentionally empty
+        }
         return "unknown";
     }
 
@@ -140,7 +143,7 @@ public class CandidateService {
         List<Application> applications = applicationRepository.findByCandidateId(candidateId);
         return applications.stream()
                 .map(app -> buildApplicationResponse(candidateId, app))
-                .collect(Collectors.toList());
+                .toList();
     }
 
     private CandidateApplicationResponse buildApplicationResponse(String candidateId, Application app) {
@@ -155,7 +158,7 @@ public class CandidateService {
         List<Assessment> assessments = assessmentRepository.findByJobId(jobId);
         List<CandidateApplicationResponse.JobTestInfo> testInfos = assessments.stream()
                 .map(a -> buildTestInfo(candidateId, a))
-                .collect(Collectors.toList());
+                .toList();
 
         List<StageProgressDTO> stages = loadStageProgress(candidateId, jobId);
 
@@ -183,18 +186,18 @@ public class CandidateService {
     private CandidateApplicationResponse.JobTestInfo buildTestInfo(String candidateId, Assessment assessment) {
         String testCategory;
         if (assessment.getType() == AssessmentType.TECHNICAL) {
-            testCategory = "TECHNICAL";
+            testCategory = TECHNICAL_TYPE;
         } else {
             boolean hasTechnicalQuestions = assessment.getThemes().stream()
                     .anyMatch(theme -> questionRepository.countByThemeId(theme.getId()) > 0);
-            testCategory = hasTechnicalQuestions ? "TECHNICAL" : "PSYCHOMETRIC";
+            testCategory = hasTechnicalQuestions ? TECHNICAL_TYPE : "PSYCHOMETRIC";
         }
 
         Optional<TestSession> sessionOpt =
                 testSessionRepository.findByCandidateIdAndAssessmentId(candidateId, assessment.getId());
 
         int questionsCount;
-        if ("TECHNICAL".equals(testCategory)) {
+        if (TECHNICAL_TYPE.equals(testCategory)) {
             int techCount = assessment.getThemes().stream()
                     .mapToInt(th -> questionRepository.countByThemeId(th.getId()))
                     .sum();
@@ -238,7 +241,7 @@ public class CandidateService {
                             p.getCompletedAt() != null ? p.getCompletedAt().toString() : null,
                             p.getHrNote()
                     ))
-                    .collect(Collectors.toList());
+                    .toList();
         } catch (Exception e) {
             return new ArrayList<>();
         }

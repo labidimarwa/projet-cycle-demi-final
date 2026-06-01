@@ -15,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.*;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +29,14 @@ public class InterviewService {
     private final WorkflowStageRepository            workflowStageRepository;
     private final TestSessionRepository              testSessionRepository;
     private final ObjectMapper                       objectMapper;
+
+    private static final String TIME_START       = "09:00";
+    private static final String TIME_END         = "18:00";
+    private static final String STATUS_NOT_CONFIGURED = "NOT_CONFIGURED";
+    private static final String STATUS_CLOSED    = "CLOSED";
+    private static final String DECISION_PENDING = "PENDING";
+    private static final String DECISION_ACCEPTED = "ACCEPTED";
+    private static final String DECISION_REJECTED = "REJECTED";
 
     // ══════════════════════════════════════════════════════════════════════════
     // CREATE
@@ -63,12 +70,12 @@ public class InterviewService {
                     .assigneeName(stage.getAssignedTo())
                     .durationMinutes(60)
                     .interviewsPerDay(4)
-                    .dayStartTime("09:00")
-                    .dayEndTime("18:00")
+                    .dayStartTime(TIME_START)
+                    .dayEndTime(TIME_END)
                     .gridConfigured(false)
                     .scheduleConfigured(false)
                     .slotsGenerated(false)
-                    .phaseStatus("NOT_CONFIGURED")
+                    .phaseStatus(STATUS_NOT_CONFIGURED)
                     .build();
 
             interviewRepository.save(interview);
@@ -90,7 +97,7 @@ public class InterviewService {
 
     public List<InterviewSummaryResponse> getInterviewsForUser(String userId) {
         List<Interview> result = interviewRepository.findByAssigneeId(userId);
-        return result.stream().map(this::toSummary).collect(Collectors.toList());
+        return result.stream().map(this::toSummary).toList();
     }
 
     @Transactional(readOnly = true)
@@ -103,7 +110,7 @@ public class InterviewService {
         return slotRepository.findByInterviewId(interviewId).stream()
                 .sorted(Comparator.comparing(InterviewSlot::getSlotStart))
                 .map(this::toSlotResponse)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -117,7 +124,7 @@ public class InterviewService {
     @Transactional(readOnly = true)
     public JobPhasesStatusResponse getJobPhases(String jobId) {
         Job job = jobRepository.findById(jobId)
-                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
+                .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
 
         List<Interview> rhList   = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
         List<Interview> techList = interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW);
@@ -127,8 +134,8 @@ public class InterviewService {
         Interview tech = techList.isEmpty() ? null : techList.get(0);
         Interview adm  = admList.isEmpty()  ? null : admList.get(0);
 
-        boolean rhClosed   = rh   != null && "CLOSED".equals(rh.getPhaseStatus());
-        boolean techClosed = tech != null && "CLOSED".equals(tech.getPhaseStatus());
+        boolean rhClosed   = rh   != null && STATUS_CLOSED.equals(rh.getPhaseStatus());
+        boolean techClosed = tech != null && STATUS_CLOSED.equals(tech.getPhaseStatus());
 
         // Occupied dates from RH
         List<LocalDate> rhOccupied = new ArrayList<>();
@@ -219,7 +226,7 @@ public class InterviewService {
             }
         }
 
-        if ("NOT_CONFIGURED".equals(interview.getPhaseStatus())) {
+        if (STATUS_NOT_CONFIGURED.equals(interview.getPhaseStatus())) {
             interview.setPhaseStatus("CONFIGURED");
         }
 
@@ -242,7 +249,7 @@ public class InterviewService {
         Interview interview = findInterview(interviewId);
 
         if (interview.getStartDate() == null || interview.getEndDate() == null) {
-            throw new RuntimeException("Interview schedule not configured yet");
+            throw new IllegalStateException("Interview schedule not configured yet");
         }
 
         // Phase-specific prerequisites
@@ -291,11 +298,11 @@ public class InterviewService {
         List<InterviewSlot> slots = new ArrayList<>();
         int candidateIdx = 0;
 
-        outer:
         for (LocalDateTime roundStart : rounds) {
+            if (candidateIdx >= candidateIds.size()) break;
             LocalDateTime roundEnd = roundStart.plusMinutes(duration);
             for (int i = 0; i < parallelism; i++) {
-                if (candidateIdx >= candidateIds.size()) break outer;
+                if (candidateIdx >= candidateIds.size()) break;
 
                 String candidateId = candidateIds.get(candidateIdx++);
                 User candidate = userRepository.findById(candidateId).orElse(null);
@@ -314,7 +321,7 @@ public class InterviewService {
                         .slotStart(roundStart)
                         .slotEnd(roundEnd)
                         .status(InterviewSlot.SlotStatus.SCHEDULED)
-                        .decision("PENDING")
+                        .decision(DECISION_PENDING)
                         .build();
 
                 slots.add(slotRepository.save(slot));
@@ -335,7 +342,7 @@ public class InterviewService {
 
         log.info("Generated {} slots for interview {} (parallelism={}, phases={})",
                 slots.size(), interviewId, parallelism, interview.getStageType());
-        return slots.stream().map(this::toSlotResponse).collect(Collectors.toList());
+        return slots.stream().map(this::toSlotResponse).toList();
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -431,8 +438,8 @@ public class InterviewService {
     public InterviewSummaryResponse closePhase(String interviewId, ClosePhaseRequest req) {
         Interview interview = findInterview(interviewId);
 
-        if ("CLOSED".equals(interview.getPhaseStatus())) {
-            throw new RuntimeException("Phase already closed");
+        if (STATUS_CLOSED.equals(interview.getPhaseStatus())) {
+            throw new IllegalStateException("Phase already closed");
         }
 
         // For Admin: both RH and Technical must be closed first
@@ -440,7 +447,7 @@ public class InterviewService {
             ensurePreviousPhasesClosedForAdmin(interview.getJobId());
         }
 
-        interview.setPhaseStatus("CLOSED");
+        interview.setPhaseStatus(STATUS_CLOSED);
         interviewRepository.save(interview);
 
         log.info("Phase CLOSED: interview={}, type={}, reason={}",
@@ -455,7 +462,7 @@ public class InterviewService {
     @Transactional
     public SlotResponse submitEvaluation(String slotId, EvaluationSubmitRequest req) {
         InterviewSlot slot = slotRepository.findById(slotId)
-                .orElseThrow(() -> new RuntimeException("Slot not found: " + slotId));
+                .orElseThrow(() -> new IllegalArgumentException("Slot not found: " + slotId));
 
         try {
             slot.setEvaluationResultJson(objectMapper.writeValueAsString(req.getScores()));
@@ -470,9 +477,9 @@ public class InterviewService {
 
         String jobId = findInterview(slot.getInterviewId()).getJobId();
 
-        if ("ACCEPTED".equals(req.getDecision())) {
+        if (DECISION_ACCEPTED.equals(req.getDecision())) {
             advanceStageProgress(slot.getCandidateId(), jobId);
-        } else if ("REJECTED".equals(req.getDecision())) {
+        } else if (DECISION_REJECTED.equals(req.getDecision())) {
             rejectStageProgress(slot.getCandidateId(), jobId);
         }
 
@@ -510,7 +517,7 @@ public class InterviewService {
                             .assigneeName(slot.getAssigneeName())
                             .build();
                 })
-                .collect(Collectors.toList());
+                .toList();
     }
 
     @Transactional
@@ -534,8 +541,8 @@ public class InterviewService {
 
         if (type == StageType.TECHNICAL_INTERVIEW) {
             List<Interview> rhList = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
-            if (!rhList.isEmpty() && !"CLOSED".equals(rhList.get(0).getPhaseStatus())) {
-                throw new RuntimeException(
+            if (!rhList.isEmpty() && !STATUS_CLOSED.equals(rhList.get(0).getPhaseStatus())) {
+                throw new IllegalStateException(
                         "Cannot configure Technical interview: RH interview phase is not CLOSED yet. " +
                         "Current status: " + rhList.get(0).getPhaseStatus());
             }
@@ -556,7 +563,7 @@ public class InterviewService {
                 .stream()
                 .filter(s -> s.getStageOrder() != null && s.getStageType() != null)
                 .sorted(Comparator.comparing(WorkflowStage::getStageOrder))
-                .collect(Collectors.toList());
+                .toList();
 
         WorkflowStage thisStage = allStages.stream()
                 .filter(s -> s.getId().equals(interview.getWorkflowStageId()))
@@ -577,7 +584,7 @@ public class InterviewService {
                     .count();
 
             if (activeCount > 0) {
-                throw new RuntimeException(
+                throw new IllegalStateException(
                         "Cannot generate interview slots: the test phase '" + stage.getName() +
                         "' still has " + activeCount + " candidate(s) in progress or pending. " +
                         "All tests must be completed or rejected before scheduling interviews.");
@@ -589,14 +596,14 @@ public class InterviewService {
         List<Interview> rhList   = interviewRepository.findByJobIdAndStageType(jobId, StageType.RH_INTERVIEW);
         List<Interview> techList = interviewRepository.findByJobIdAndStageType(jobId, StageType.TECHNICAL_INTERVIEW);
 
-        boolean rhOk   = rhList.isEmpty()   || "CLOSED".equals(rhList.get(0).getPhaseStatus());
-        boolean techOk = techList.isEmpty() || "CLOSED".equals(techList.get(0).getPhaseStatus());
+        boolean rhOk   = rhList.isEmpty()   || STATUS_CLOSED.equals(rhList.get(0).getPhaseStatus());
+        boolean techOk = techList.isEmpty() || STATUS_CLOSED.equals(techList.get(0).getPhaseStatus());
 
         if (!rhOk) {
-            throw new RuntimeException("Cannot proceed to Admin interview: RH phase is not CLOSED");
+            throw new IllegalStateException("Cannot proceed to Admin interview: RH phase is not CLOSED");
         }
         if (!techOk) {
-            throw new RuntimeException("Cannot proceed to Admin interview: Technical phase is not CLOSED");
+            throw new IllegalStateException("Cannot proceed to Admin interview: Technical phase is not CLOSED");
         }
     }
 
@@ -624,7 +631,7 @@ public class InterviewService {
                 if (rh.getComputedEndDateTime() != null) {
                     LocalDate rhEndDate = rh.getComputedEndDateTime().toLocalDate();
                     if (!startDate.isAfter(rhEndDate)) {
-                        throw new RuntimeException(
+                        throw new IllegalStateException(
                                 "Technical interview cannot start on " + startDate +
                                 " — RH phase ends on " + rhEndDate + ". Choose a start date after " + rhEndDate);
                     }
@@ -634,7 +641,7 @@ public class InterviewService {
                 List<LocalDate> rhDates = slotRepository.findOccupiedDatesByInterviewIds(
                         List.of(rh.getId()));
                 if (startDate != null && rhDates.contains(startDate)) {
-                    throw new RuntimeException(
+                    throw new IllegalStateException(
                             "Date " + startDate + " is already used by the RH interview phase");
                 }
             }
@@ -648,7 +655,7 @@ public class InterviewService {
             if (!techList.isEmpty() && techList.get(0).getComputedEndDateTime() != null) {
                 LocalDate techEnd = techList.get(0).getComputedEndDateTime().toLocalDate();
                 if (!startDate.isAfter(techEnd)) {
-                    throw new RuntimeException(
+                    throw new IllegalStateException(
                             "Admin interview cannot start on " + startDate +
                             " — Technical phase ends on " + techEnd);
                 }
@@ -662,7 +669,7 @@ public class InterviewService {
             if (!previousIds.isEmpty()) {
                 List<LocalDate> occupied = slotRepository.findOccupiedDatesByInterviewIds(previousIds);
                 if (occupied.contains(startDate)) {
-                    throw new RuntimeException(
+                    throw new IllegalStateException(
                             "Date " + startDate + " is already used by a previous interview phase");
                 }
             }
@@ -761,7 +768,7 @@ public class InterviewService {
                 .filter(r -> r.getStatus() == StageProgressStatus.IN_PROGRESS)
                 .map(ApplicationStageProgress::getCandidateId)
                 .distinct()
-                .collect(Collectors.toList());
+                .toList();
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -798,8 +805,8 @@ public class InterviewService {
         long remaining = slotRepository.countScheduledByInterviewId(interviewId);
         if (remaining == 0) {
             interviewRepository.findById(interviewId).ifPresent(i -> {
-                if (!"CLOSED".equals(i.getPhaseStatus())) {
-                    i.setPhaseStatus("CLOSED");
+                if (!STATUS_CLOSED.equals(i.getPhaseStatus())) {
+                    i.setPhaseStatus(STATUS_CLOSED);
                     interviewRepository.save(i);
                     log.info("Auto-closed phase for interview {}", interviewId);
                 }
@@ -815,7 +822,7 @@ public class InterviewService {
         List<ApplicationStageProgress> stages = stageProgressRepository
                 .findByCandidateIdAndJobId(candidateId, jobId).stream()
                 .sorted(Comparator.comparing(ApplicationStageProgress::getStageOrder))
-                .collect(Collectors.toList());
+                .toList();
 
         ApplicationStageProgress current = stages.stream()
                 .filter(s -> s.getStatus() == StageProgressStatus.IN_PROGRESS)
@@ -905,7 +912,8 @@ public class InterviewService {
         int eligible = 0;
         try {
             eligible = getEligibleCandidates(i).size();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { // intentionally empty
+        }
 
         return InterviewSummaryResponse.builder()
                 .id(i.getId())
@@ -930,7 +938,7 @@ public class InterviewService {
                 .completedInterviews(completed)
                 .excludedHours(excluded)
                 .assignees(assignees)
-                .phaseStatus(i.getPhaseStatus() != null ? i.getPhaseStatus() : "NOT_CONFIGURED")
+                .phaseStatus(i.getPhaseStatus() != null ? i.getPhaseStatus() : STATUS_NOT_CONFIGURED)
                 .computedEndDateTime(i.getComputedEndDateTime())
                 .eligibleCandidates(eligible)
                 .build();
@@ -964,7 +972,7 @@ public class InterviewService {
                         .email(u.getEmail())
                         .role(u.getClass().getSimpleName().toUpperCase())
                         .build())
-                .collect(Collectors.toList());
+                .toList();
     }
 
     private Map<String, String> loadAssigneeNames(List<String> ids) {
@@ -991,6 +999,6 @@ public class InterviewService {
 
     private Interview findInterview(String id) {
         return interviewRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Interview not found: " + id));
+                .orElseThrow(() -> new IllegalArgumentException("Interview not found: " + id));
     }
 }

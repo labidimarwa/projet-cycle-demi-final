@@ -1,4 +1,4 @@
-package com.nexgenai.service;
+﻿package com.nexgenai.service;
 
 import com.nexgenai.dto.hr.AnswerDecisionRequest;
 import com.nexgenai.dto.hr.AnswerDecisionResponse;
@@ -23,12 +23,17 @@ import java.util.stream.Collectors;
 /**
  * Manages the lifecycle of test sessions: start, answer, submit (both technical and RH),
  * and anti-cheat event logging. All candidate answers and events are stored in proper
- * relational tables — no JSON columns used.
+ * relational tables â€” no JSON columns used.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class TestSessionService {
+
+    private static final String CANDIDATE_NOT_FOUND  = "Candidate not found";
+    private static final String ASSESSMENT_NOT_FOUND = "Assessment not found: ";
+    private static final String SESSION_NOT_FOUND    = "Session not found";
+    private static final String LANG_PYTHON          = "python";
 
     private final TestSessionRepository              testSessionRepository;
     private final AssessmentRepository               assessmentRepository;
@@ -46,16 +51,16 @@ public class TestSessionService {
     @Value("${app.base-url:http://localhost:8080}")
     private String baseUrl;
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // START OR GET SESSION (used by CandidateController)
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Transactional
     public Map<String, String> startOrGetSession(String assessmentId, String email) {
         Candidate candidate = candidateRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("Candidate not found"));
+                .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
         Assessment assessment = assessmentRepository.findByIdWithThemes(assessmentId)
-                .orElseThrow(() -> new RuntimeException("Assessment not found: " + assessmentId));
+                .orElseThrow(() -> new IllegalStateException(ASSESSMENT_NOT_FOUND + assessmentId));
 
         TestSession session = testSessionRepository
                 .findByCandidateIdAndAssessmentId(candidate.getId(), assessmentId)
@@ -71,16 +76,16 @@ public class TestSessionService {
         );
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // TECHNICAL SESSION
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Transactional
     public TechnicalSessionDto startTechnicalSession(String assessmentId, String existingSessionId, String email) {
         Candidate candidate = candidateRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("Candidate not found"));
+                .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
         Assessment assessment = assessmentRepository.findByIdWithThemes(assessmentId)
-                .orElseThrow(() -> new RuntimeException("Assessment not found: " + assessmentId));
+                .orElseThrow(() -> new IllegalStateException(ASSESSMENT_NOT_FOUND + assessmentId));
 
         TestSession session;
         if (existingSessionId != null && !existingSessionId.isBlank()) {
@@ -102,7 +107,7 @@ public class TestSessionService {
         List<SimpleQuestionDto> questions = assessment.getThemes().stream()
                 .flatMap(theme -> questionRepository.findByThemeIdOrderByOrderIndex(theme.getId()).stream())
                 .map(q -> mapToTechnicalDto(q, savedByQuestion.get(q.getId())))
-                .collect(Collectors.toList());
+                .toList();
 
         int timeLimitSeconds = computeTimeLimit(questions);
         session.setTimeLimitSeconds(timeLimitSeconds);
@@ -121,7 +126,7 @@ public class TestSessionService {
     @Transactional
     public void saveTechnicalAnswer(String sessionId, String questionId, Object answer, String email) {
         TestSession session = testSessionRepository.findById(sessionId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED) return;
 
         persistAnswer(session, questionId, answer);
@@ -131,7 +136,7 @@ public class TestSessionService {
     @SuppressWarnings("unchecked")
     public SubmitResultDto submitTechnicalTest(String sessionId, SubmitTestRequest req, String email) {
         TestSession session = testSessionRepository.findById(sessionId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
             throw new RuntimeException("Already submitted");
 
@@ -200,16 +205,16 @@ public class TestSessionService {
                 .questionsResults(questionResults).build();
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // RH SESSION
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Transactional
     public com.nexgenai.dto.test.TestSessionDto getRhTestSession(String assessmentId, String sessionId, String email) {
         Candidate candidate = candidateRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("Candidate not found"));
+                .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
         Assessment assessment = assessmentRepository.findByIdWithThemes(assessmentId)
-                .orElseThrow(() -> new RuntimeException("Assessment not found: " + assessmentId));
+                .orElseThrow(() -> new IllegalStateException(ASSESSMENT_NOT_FOUND + assessmentId));
 
         TestSession session;
         if (sessionId != null && !sessionId.isBlank()) {
@@ -255,7 +260,7 @@ public class TestSessionService {
     @Transactional
     public int submitRhTest(String sessionId, String email) {
         TestSession session = testSessionRepository.findById(sessionId)
-                .orElseThrow(() -> new RuntimeException("Session not found: " + sessionId));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND + ": " + sessionId));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
             return session.getScore() != null ? session.getScore() : 0;
 
@@ -265,7 +270,7 @@ public class TestSessionService {
         }
 
         Assessment assessment = assessmentRepository.findByIdWithThemes(session.getAssessment().getId())
-                .orElseThrow(() -> new RuntimeException("Assessment not found"));
+                .orElseThrow(() -> new IllegalStateException(ASSESSMENT_NOT_FOUND + "unknown"));
 
         int totalPoints = 0, earnedPoints = 0;
 
@@ -290,7 +295,7 @@ public class TestSessionService {
         session.setCompletedAt(LocalDateTime.now());
         testSessionRepository.save(session);
 
-        log.info("RH test {} submitted by {} — Score: {}/100", sessionId, email, score);
+        log.info("RH test {} submitted by {} â€” Score: {}/100", sessionId, email, score);
         return score;
     }
 
@@ -306,7 +311,7 @@ public class TestSessionService {
     @Transactional
     public void saveRhAnswer(com.nexgenai.dto.test.SaveAnswerRequest req, String email) {
         TestSession session = testSessionRepository.findById(req.getSessionId())
-                .orElseThrow(() -> new RuntimeException("Session not found: " + req.getSessionId()));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND + ": " + req.getSessionId()));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
             throw new RuntimeException("Test already submitted");
 
@@ -319,9 +324,9 @@ public class TestSessionService {
         sessionAnswerRepository.save(answer);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // ANTI-CHEAT
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Transactional
     public void logAntiCheatEvent(String sessionId, AntiCheatEventDto event, String email) {
@@ -341,7 +346,7 @@ public class TestSessionService {
     @Transactional(readOnly = true)
     public AntiCheatReportDto getAntiCheatReport(String sessionId) {
         TestSession session = testSessionRepository.findById(sessionId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND));
 
         List<AntiCheatEvent> rawEvents = antiCheatRepository.findBySessionIdOrderByOccurredAtAsc(sessionId);
 
@@ -353,7 +358,7 @@ public class TestSessionService {
                     dto.setQuestionIndex(e.getQuestionIndex());
                     dto.setTimestamp(e.getOccurredAt() != null ? e.getOccurredAt().toString() : null);
                     return dto;
-                }).collect(Collectors.toList());
+                }).toList();
 
         long tabSwitches = events.stream().filter(e -> "TAB_SWITCH".equals(e.getType())).count();
         long pastes      = events.stream().filter(e -> "PASTE".equals(e.getType())).count();
@@ -380,16 +385,16 @@ public class TestSessionService {
                 .build();
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // PER-ANSWER EVALUATOR DECISIONS
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Transactional
     public AnswerDecisionResponse setAnswerDecision(String assessmentId, String candidateId,
                                                     String questionId, AnswerDecisionRequest req) {
         TestSession session = testSessionRepository
                 .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND));
 
         TestSessionAnswerDecision decision = decisionRepository
                 .findBySessionIdAndQuestionId(session.getId(), questionId)
@@ -410,7 +415,7 @@ public class TestSessionService {
     public void removeAnswerDecision(String assessmentId, String candidateId, String questionId) {
         TestSession session = testSessionRepository
                 .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND));
         decisionRepository.deleteBySessionIdAndQuestionId(session.getId(), questionId);
     }
 
@@ -418,7 +423,7 @@ public class TestSessionService {
     public Map<String, AnswerDecisionResponse> getAnswerDecisions(String assessmentId, String candidateId) {
         TestSession session = testSessionRepository
                 .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
+                .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND));
         return buildDecisionMap(session.getId());
     }
 
@@ -434,9 +439,9 @@ public class TestSessionService {
         return result;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // PRIVATE HELPERS
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     private TestSession createTechnicalSession(Candidate candidate, Assessment assessment) {
         return testSessionRepository.save(TestSession.builder()
@@ -463,7 +468,7 @@ public class TestSessionService {
             entity.setSubmittedCode((String) m.get("code"));
             entity.setSubmittedLanguage((String) m.get("language"));
         } else if (answer instanceof List<?> list) {
-            entity.setSelectedOptionIds(list.stream().map(Object::toString).collect(Collectors.toList()));
+            entity.setSelectedOptionIds(list.stream().map(Object::toString).toList());
         } else if (answer instanceof Number num) {
             entity.setLikertValue(num.intValue());
         } else {
@@ -488,13 +493,13 @@ public class TestSessionService {
         String code     = saved.getSubmittedCode();
         String language = saved.getSubmittedLanguage();
         if (code == null || code.isBlank()) return 0;
-        if (language == null) language = "python";
+        if (language == null) language = LANG_PYTHON;
 
         List<RunCodeRequest.TestCasePayload> cases = (q.getTestCases() != null)
                 ? q.getTestCases().stream()
                     .map(tc -> new RunCodeRequest.TestCasePayload(tc.getInput(), tc.getOutput(),
                                                                   tc.getPoints(), tc.isVisible()))
-                    .collect(Collectors.toList())
+                    .toList()
                 : List.of();
         if (cases.isEmpty()) return 0;
 
@@ -515,7 +520,7 @@ public class TestSessionService {
         }
         sessionAnswerRepository.save(saved);
 
-        log.info("Question {} — code scored: {}/{} pts", q.getId(), earned, maxPts);
+        log.info("Question {} â€” code scored: {}/{} pts", q.getId(), earned, maxPts);
         return Math.min(earned, maxPts);
     }
 
@@ -583,7 +588,7 @@ public class TestSessionService {
                 .flatMap(th -> th.getThemeModels().stream())
                 .flatMap(tm -> tm.getQuestions().stream())
                 .map(this::mapRhQuestion)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     private List<AntiCheatReportDto.QuestionResult> buildAntiCheatQuestionResults(TestSession session) {
@@ -629,7 +634,7 @@ public class TestSessionService {
                     .map(tc -> TestCaseDto.builder()
                             .input(tc.getInput()).output(tc.getOutput())
                             .points(tc.getPoints() != null ? tc.getPoints() : 10).isVisible(tc.isVisible()).build())
-                    .collect(Collectors.toList());
+                    .toList();
         }
 
         List<QcmOptionDto> options = null;
@@ -640,7 +645,7 @@ public class TestSessionService {
             options = shuffled.stream()
                     .map(o -> QcmOptionDto.builder().id("opt-" + idx[0]++).text(o.getText())
                             .points(o.getPoints() != null ? o.getPoints() : 0).build())
-                    .collect(Collectors.toList());
+                    .toList();
         }
 
         Object savedValue = null;
@@ -683,7 +688,7 @@ public class TestSessionService {
                 .map(o -> com.nexgenai.dto.test.OptionDto.builder()
                         .id(o.getId()).text(o.getText())
                         .orderIndex(o.getOrderIndex() != null ? o.getOrderIndex() : 0).build())
-                .collect(Collectors.toList());
+                .toList();
 
         return com.nexgenai.dto.test.QuestionDto.builder()
                 .id(q.getId()).text(q.getText()).imageUrl(imageUrl)

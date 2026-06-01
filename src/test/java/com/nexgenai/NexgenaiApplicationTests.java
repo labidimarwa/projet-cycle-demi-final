@@ -9,6 +9,7 @@ class NexgenaiApplicationTests {
 
 	@Test
 	void contextLoads() {
+		// Spring context load test — no assertions needed
 	}
 
 }

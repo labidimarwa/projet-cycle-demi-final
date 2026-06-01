@@ -96,7 +96,7 @@ public class PythonExtractorClient {
                         if (p.getJsonSchema()  != null) m.put("json_schema",  p.getJsonSchema());
                         return m;
                     })
-                    .collect(Collectors.toList());
+                    .toList();
                 form.part("job_prerequisites", objectMapper.writeValueAsString(prereqsJson));
             } catch (Exception e) {
                 log.warn("⚠️ Impossible de sérialiser les prérequis job : {}", e.getMessage());
@@ -129,24 +129,22 @@ public class PythonExtractorClient {
                 .timeout(Duration.ofMillis(timeoutMs))
                 .block();
 
-            if (result == null) throw new RuntimeException("Réponse vide du service d'extraction.");
+            if (result == null) throw new IllegalStateException("Réponse vide du service d'extraction.");
             return result;
 
         } catch (WebClientRequestException e) {
             log.error("❌ Microservice Python inaccessible ({})", e.getMessage());
-            throw new RuntimeException("Le service d'extraction IA est indisponible...");
+            throw new IllegalStateException("Le service d'extraction IA est indisponible...", e);
         } catch (Exception e) {
-            // Timeout ou autre
             if (e.getCause() instanceof java.util.concurrent.TimeoutException
                 || e.getMessage() != null && e.getMessage().contains("timeout")) {
                 log.error("❌ Timeout extraction CV après {}ms", timeoutMs);
-                throw new RuntimeException(
+                throw new IllegalStateException(
                     "Timeout : Qwen n'a pas répondu dans " + (timeoutMs/1000) + "s. " +
-                    "Augmentez matching.python.timeout ou réduisez le CV."
-                );
+                    "Augmentez matching.python.timeout ou réduisez le CV.", e);
             }
             log.error("❌ Erreur inattendue extraction : {}", e.getMessage());
-            throw new RuntimeException("Erreur inattendue : " + e.getMessage());
+            throw new IllegalStateException("Erreur inattendue : " + e.getMessage(), e);
         }
     }
 
@@ -184,9 +182,7 @@ public class PythonExtractorClient {
 
         } catch (WebClientRequestException e) {
             log.error("❌ Python /embed inaccessible");
-            throw new RuntimeException(
-                "Le service d'embeddings est indisponible (port 8000)."
-            );
+            throw new IllegalStateException("Le service d'embeddings est indisponible (port 8000).", e);
         }
     }
 
@@ -267,24 +263,28 @@ public class PythonExtractorClient {
         try {
             Map<String, Object> body = new java.util.LinkedHashMap<>();
             body.put("job_id", jobId);
-            body.put("skills", skills == null ? List.of() : skills.stream()
-                .filter(s -> s.getName() != null)
-                .map(s -> {
-                    Map<String, Object> m = new java.util.LinkedHashMap<>();
-                    m.put("nom",  s.getName());
-                    m.put("type", s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
-                    return m;
-                })
-                .collect(Collectors.toList()));
-            body.put("prerequisites", prerequisites == null ? List.of() : prerequisites.stream()
-                .filter(p -> p.getValue() != null)
-                .map(p -> {
-                    Map<String, Object> m = new java.util.LinkedHashMap<>();
-                    m.put("type",  p.getType());
-                    m.put("value", p.getValue());
-                    return m;
-                })
-                .collect(Collectors.toList()));
+            List<Map<String, Object>> skillsJson = skills == null ? List.of()
+                : skills.stream()
+                    .filter(s -> s.getName() != null)
+                    .map(s -> {
+                        Map<String, Object> m = new java.util.LinkedHashMap<>();
+                        m.put("nom",  s.getName());
+                        m.put("type", s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+                        return m;
+                    })
+                    .toList();
+            List<Map<String, Object>> prereqsJson = prerequisites == null ? List.of()
+                : prerequisites.stream()
+                    .filter(p -> p.getValue() != null)
+                    .map(p -> {
+                        Map<String, Object> m = new java.util.LinkedHashMap<>();
+                        m.put("type",  p.getType());
+                        m.put("value", p.getValue());
+                        return m;
+                    })
+                    .toList();
+            body.put("skills", skillsJson);
+            body.put("prerequisites", prereqsJson);
 
             webClient.post()
                 .uri("/index-job")

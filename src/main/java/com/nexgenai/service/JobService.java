@@ -53,6 +53,8 @@ public class JobService {
     private final UserRepository        userRepository;
     private final PythonExtractorClient pythonClient;
 
+    private static final String JOB_NOT_FOUND = "Job not found: ";
+
     @Value("${app.frontend-url:http://localhost:4200}")
     private String frontendBaseUrl;
 
@@ -111,35 +113,35 @@ public class JobService {
     @Transactional(readOnly = true)
     public JobResponse getJobById(String id) {
         return mapToResponse(jobRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Job not found: " + id)));
+            .orElseThrow(() -> new IllegalArgumentException(JOB_NOT_FOUND + id)));
     }
 
     @Transactional(readOnly = true)
     public List<JobResponse> getAllJobs() {
         return jobRepository.findAll().stream()
             .map(this::mapToResponse)
-            .collect(Collectors.toList());
+            .toList();
     }
 
     @Transactional(readOnly = true)
     public List<JobResponse> getActiveJobs() {
         return jobRepository.findByStatus(JobStatus.ACTIVE).stream()
             .map(this::mapToResponse)
-            .collect(Collectors.toList());
+            .toList();
     }
 
     @Transactional(readOnly = true)
     public List<JobResponse> getJobsByDepartment(String department) {
         return jobRepository.findByDepartment(department).stream()
             .map(this::mapToResponse)
-            .collect(Collectors.toList());
+            .toList();
     }
 
     // ── PATCH UPDATE (partial) ────────────────────────────────────────────────
     @Transactional
     public JobResponse patchJob(String id, UpdateJobRequest req) {
         Job job = jobRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Job not found: " + id));
+            .orElseThrow(() -> new IllegalArgumentException(JOB_NOT_FOUND + id));
 
         // ── Scalar fields ─────────────────────────────────────────────────────
         if (req.getTitle()           != null) job.setTitle(req.getTitle());
@@ -201,7 +203,7 @@ public class JobService {
     @Transactional
     public JobResponse changeStatus(String id, JobStatus newStatus) {
         Job job = jobRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Job not found: " + id));
+            .orElseThrow(() -> new IllegalArgumentException(JOB_NOT_FOUND + id));
         validateTransition(job.getStatus(), newStatus);
         job.setStatus(newStatus);
         Job saved = jobRepository.save(job);
@@ -224,7 +226,7 @@ public class JobService {
     @Transactional
     public void deleteJob(String id) {
         if (!jobRepository.existsById(id))
-            throw new RuntimeException("Job not found: " + id);
+            throw new IllegalArgumentException(JOB_NOT_FOUND + id);
         jobRepository.deleteById(id);
         CompletableFuture.runAsync(() -> pythonClient.deleteJobIndex(id));
     }
@@ -233,7 +235,7 @@ public class JobService {
     @Transactional
     public JobResponse updateJob(String id, CreateJobRequest req) {
         Job job = jobRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Job not found: " + id));
+            .orElseThrow(() -> new IllegalArgumentException(JOB_NOT_FOUND + id));
         applyRequestToJob(job, req);
         return mapToResponse(jobRepository.save(job));
     }
@@ -435,7 +437,7 @@ public class JobService {
     public String generateLink(String jobId) {
         // Verify job exists
         jobRepository.findById(jobId)
-                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
+                .orElseThrow(() -> new IllegalArgumentException(JOB_NOT_FOUND + jobId));
 
         // Generate a short token
         String token = Base64.getUrlEncoder().withoutPadding()

@@ -77,20 +77,27 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
         String method = request.getMethod();
         String url    = request.getRequestURI();
 
-        // Skip static resources and actuator health
         if (url.contains("/actuator/health") || url.endsWith(".css") || url.endsWith(".js")) {
             chain.doFilter(request, response);
             return;
         }
 
-        // 1. Check URI for path traversal
         if (PATH_TRAVERSAL.matcher(url).find()) {
             eventLogger.pathTraversal(ip, method, url);
             sendError(response, 400, "Bad Request");
             return;
         }
 
-        // 2. Scan query parameters
+        if (isBlockedByParams(request, response, ip, method, url)) return;
+
+        scanHeaders(request, ip, method, url);
+
+        addSecurityHeaders(response);
+        chain.doFilter(request, response);
+    }
+
+    private boolean isBlockedByParams(HttpServletRequest request, HttpServletResponse response,
+                                      String ip, String method, String url) throws IOException {
         for (Map.Entry<String, String[]> e : request.getParameterMap().entrySet()) {
             for (String val : e.getValue()) {
                 AttackType type = classify(val);
@@ -98,13 +105,15 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
                     log(type, ip, method, url, "param:" + e.getKey(), val, eventLogger);
                     if (type == AttackType.XSS || type == AttackType.SQLI || type == AttackType.CMD) {
                         sendError(response, 400, "Bad Request");
-                        return;
+                        return true;
                     }
                 }
             }
         }
+        return false;
+    }
 
-        // 3. Scan selected request headers (not all — avoid false positives on Authorization)
+    private void scanHeaders(HttpServletRequest request, String ip, String method, String url) {
         String[] headersToCheck = {"Referer", "X-Forwarded-For", "User-Agent", "X-Custom-Header"};
         for (String h : headersToCheck) {
             String v = request.getHeader(h);
@@ -116,8 +125,9 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
                 }
             }
         }
+    }
 
-        // 4. Add security response headers (OWASP Secure Headers)
+    private void addSecurityHeaders(HttpServletResponse response) {
         response.setHeader("X-Content-Type-Options", "nosniff");
         response.setHeader("X-Frame-Options", "DENY");
         response.setHeader("X-XSS-Protection", "1; mode=block");
@@ -126,8 +136,6 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
         response.setHeader("Cache-Control", "no-store");
         response.setHeader("Content-Security-Policy",
             "default-src 'self'; frame-ancestors 'none'; object-src 'none'");
-
-        chain.doFilter(request, response);
     }
 
     // ─── helpers ─────────────────────────────────────────────────────────────
@@ -150,6 +158,7 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
             case SQLI -> logger.sqlInjectionAttempt(ip, method, url, location, payload);
             case PATH -> logger.pathTraversal(ip, method, url);
             case CMD  -> logger.xssAttempt(ip, method, url, location, "CMD:" + payload);
+            default   -> { /* NONE — not an attack, no logging needed */ }
         }
     }
 

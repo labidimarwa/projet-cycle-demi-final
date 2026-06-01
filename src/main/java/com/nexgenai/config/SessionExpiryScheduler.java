@@ -34,16 +34,16 @@ public class SessionExpiryScheduler {
         List<TestSession> active = testSessionRepository.findByStatus(TestSession.SessionStatus.IN_PROGRESS);
         int expired = 0;
         for (TestSession s : active) {
-            if (s.getTimeLimitSeconds() == null || s.getTimeLimitSeconds() <= 0) continue;
-            if (s.getStartedAt() == null) continue;
-            long elapsed = Duration.between(s.getStartedAt(), LocalDateTime.now()).getSeconds();
-            if (elapsed >= s.getTimeLimitSeconds()) {
-                s.setStatus(TestSession.SessionStatus.EXPIRED);
-                s.setCompletedAt(LocalDateTime.now());
-                if (s.getDurationSeconds() == null)
-                    s.setDurationSeconds(s.getTimeLimitSeconds());
-                testSessionRepository.save(s);
-                expired++;
+            if (s.getTimeLimitSeconds() != null && s.getTimeLimitSeconds() > 0 && s.getStartedAt() != null) {
+                long elapsed = Duration.between(s.getStartedAt(), LocalDateTime.now()).getSeconds();
+                if (elapsed >= s.getTimeLimitSeconds()) {
+                    s.setStatus(TestSession.SessionStatus.EXPIRED);
+                    s.setCompletedAt(LocalDateTime.now());
+                    if (s.getDurationSeconds() == null)
+                        s.setDurationSeconds(s.getTimeLimitSeconds());
+                    testSessionRepository.save(s);
+                    expired++;
+                }
             }
         }
         if (expired > 0) log.info("SessionExpiryScheduler: expired {} timed-out sessions", expired);

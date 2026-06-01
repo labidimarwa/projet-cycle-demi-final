@@ -19,7 +19,6 @@ import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Unified HR Service — Phase 2 refactoring.
@@ -49,6 +48,10 @@ public class HrService {
 
     private static final DateTimeFormatter ISO_FMT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
+    private static final String STATUS_PENDING  = "PENDING";
+    private static final String STATUS_ACCEPTED = "ACCEPTED";
+    private static final String CANDIDATE_APPLICATIONS_PATH = CANDIDATE_APPLICATIONS_PATH;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // APPLICANTS — List & Detail (from old HrService)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -64,7 +67,7 @@ public class HrService {
                 .sorted(Comparator.comparingInt(
                         (ApplicantSummaryResponse r) -> r.getMatchScore() != null
                                 ? r.getMatchScore() : -1).reversed())
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
@@ -77,7 +80,7 @@ public class HrService {
 
         Application application = applicationRepository
                 .findByCandidateIdAndJobId(candidateId, jobId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new IllegalArgumentException(
                         "Application not found: candidate=" + candidateId + " job=" + jobId));
 
         // AI match
@@ -96,7 +99,7 @@ public class HrService {
         // Stage progress
         List<ApplicationStageProgress> stageRows = stageProgressService.getProgress(candidateId, jobId);
         List<StageProgressDTO> stageProgress = stageRows.stream()
-                .map(this::mapStageProgress).collect(Collectors.toList());
+                .map(this::mapStageProgress).toList();
 
         return ApplicantDetailResponse.builder()
                 .candidateId(candidateId)
@@ -109,7 +112,7 @@ public class HrService {
                 .hasCv(candidate.getCvPath() != null)
                 .cvPath(candidate.getCvPath())
                 .applicationStatus(application.getStatus() != null
-                        ? application.getStatus().name() : "PENDING")
+                        ? application.getStatus().name() : STATUS_PENDING)
                 .appliedAt(application.getAppliedAt() != null
                         ? application.getAppliedAt().format(ISO_FMT) : null)
                 .matchScore(matchScore)
@@ -129,12 +132,12 @@ public class HrService {
     public void updateApplicantStatus(String jobId, String candidateId, String status) {
         Application application = applicationRepository
                 .findByCandidateIdAndJobId(candidateId, jobId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new IllegalArgumentException(
                         "Application not found: candidate=" + candidateId + " job=" + jobId));
         try {
             application.setStatus(ApplicationStatus.valueOf(status.toUpperCase()));
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException("Invalid status: " + status);
+            throw new IllegalArgumentException("Invalid status: " + status);
         }
         applicationRepository.save(application);
         log.info("✅ Application status updated: candidate={} job={} → {}", candidateId, jobId, status);
@@ -147,7 +150,7 @@ public class HrService {
     public Path getCvPath(String candidateId) {
         Candidate candidate = findCandidate(candidateId);
         if (candidate.getCvPath() == null)
-            throw new RuntimeException("No CV for candidate: " + candidateId);
+            throw new IllegalStateException("No CV for candidate: " + candidateId);
         String[] parts    = candidate.getCvPath().split("\\|");
         String   fileName = parts.length > 1 ? parts[1] : parts[0];
         return Paths.get(uploadDir).toAbsolutePath().resolve(fileName);
@@ -160,7 +163,7 @@ public class HrService {
     @Transactional(readOnly = true)
     public JobCandidatesResponse getCandidatesForJob(String jobId) {
         Job job = jobRepository.findById(jobId)
-            .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
+            .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
 
         List<Application> applications = applicationRepository.findByJobId(jobId);
 
@@ -170,7 +173,7 @@ public class HrService {
                 (JobCandidatesResponse.CandidateSummaryDTO s) ->
                     s.getMatchScore() == null ? 0 : s.getMatchScore()
             ).reversed())
-            .collect(Collectors.toList());
+            .toList();
 
         double avg = summaries.stream()
             .filter(s -> s.getMatchScore() != null && s.getMatchScore() > 0)
@@ -191,7 +194,7 @@ public class HrService {
         Candidate candidate = findCandidate(candidateId);
         Application app = applicationRepository
             .findByCandidateIdAndJobId(candidateId, jobId)
-            .orElseThrow(() -> new RuntimeException("Application not found"));
+            .orElseThrow(() -> new IllegalArgumentException("Application not found"));
 
         // Match
         CandidateApplicationDetailDTO.MatchDetailDTO matchDTO = null;
@@ -251,28 +254,28 @@ public class HrService {
     public ApplicationDecisionResponse decide(String jobId, String candidateId,
                                                ApplicationDecisionRequest req) {
         String decision = req.getDecision().toUpperCase();
-        if (!decision.equals("ACCEPTED") && !decision.equals("REJECTED")) {
+        if (!decision.equals(STATUS_ACCEPTED) && !decision.equals("REJECTED")) {
             throw new IllegalArgumentException("Decision must be ACCEPTED or REJECTED");
         }
 
         Candidate candidate = findCandidate(candidateId);
 
         Job job = jobRepository.findById(jobId)
-            .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
+            .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
 
         JobMatch match = jobMatchRepository.findByCandidateIdAndJobId(candidateId, jobId)
-            .orElseThrow(() -> new RuntimeException("AI Match not found"));
+            .orElseThrow(() -> new IllegalStateException("AI Match not found"));
 
         // Find the current IN_PROGRESS stage
         ApplicationStageProgress currentStage = stageProgressRepository
             .findByCandidateIdAndJobId(candidateId, jobId).stream()
             .filter(s -> s.getStatus() == StageProgressStatus.IN_PROGRESS)
             .min(Comparator.comparing(ApplicationStageProgress::getStageOrder))
-            .orElseThrow(() -> new RuntimeException("No active stage found"));
+            .orElseThrow(() -> new IllegalStateException("No active stage found"));
 
         String nextStageName = null;
 
-        if (decision.equals("ACCEPTED")) {
+        if (decision.equals(STATUS_ACCEPTED)) {
             currentStage.setStatus(StageProgressStatus.COMPLETED);
             currentStage.setCompletedAt(LocalDateTime.now());
             currentStage.setHrNote(req.getNote());
@@ -302,7 +305,7 @@ public class HrService {
                 candidateId, NotificationType.APPLICATION_ACCEPTED,
                 "Application Accepted!",
                 "Congratulations! Your application for \"" + job.getTitle() + "\" has been accepted.",
-                jobId, "JOB", "/candidate/applications"
+                jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
             );
 
             // If next stage is a test, send a dedicated test-assigned notification
@@ -313,7 +316,7 @@ public class HrService {
                         candidateId, NotificationType.TEST_ASSIGNED,
                         "New Test Available",
                         "You have a new test to complete: \"" + nextStage.getStageName() + "\".",
-                        jobId, "JOB", "/candidate/applications"
+                        jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
                     );
                 } else if ("RH_INTERVIEW".equals(nextType) || "TECHNICAL_INTERVIEW".equals(nextType)
                         || "ADMIN_INTERVIEW".equals(nextType)) {
@@ -321,14 +324,14 @@ public class HrService {
                         candidateId, NotificationType.INTERVIEW_SCHEDULED,
                         "Interview Stage Activated",
                         "Your next step is an interview: \"" + nextStage.getStageName() + "\".",
-                        jobId, "JOB", "/candidate/applications"
+                        jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
                     );
                 } else {
                     notificationService.send(
                         candidateId, NotificationType.STAGE_COMPLETED,
                         "Stage Advanced",
                         "You have been moved to the next stage: \"" + nextStage.getStageName() + "\".",
-                        jobId, "JOB", "/candidate/applications"
+                        jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
                     );
                 }
             }
@@ -352,7 +355,7 @@ public class HrService {
                 candidateId, NotificationType.APPLICATION_REJECTED,
                 "Application Update",
                 "Thank you for applying to \"" + job.getTitle() + "\". We have decided to move forward with other candidates.",
-                jobId, "JOB", "/candidate/applications"
+                jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
             );
         }
 
@@ -361,7 +364,7 @@ public class HrService {
             .jobId(jobId)
             .decision(decision)
             .nextStageName(nextStageName)
-            .message(decision.equals("ACCEPTED")
+            .message(decision.equals(STATUS_ACCEPTED)
                 ? "Candidate accepted. Moved to: " + (nextStageName != null ? nextStageName : "final stage")
                 : "Candidate rejected. Notification email sent.")
             .build();
@@ -382,7 +385,7 @@ public class HrService {
         if (candidate == null) {
             return ApplicantSummaryResponse.builder()
                     .candidateId(candidateId)
-                    .applicationStatus(app.getStatus() != null ? app.getStatus().name() : "PENDING")
+                    .applicationStatus(app.getStatus() != null ? app.getStatus().name() : STATUS_PENDING)
                     .build();
         }
 
@@ -411,7 +414,7 @@ public class HrService {
                 .firstName(candidate.getFirstName())
                 .lastName(candidate.getLastName())
                 .email(candidate.getEmail())
-                .applicationStatus(app.getStatus() != null ? app.getStatus().name() : "PENDING")
+                .applicationStatus(app.getStatus() != null ? app.getStatus().name() : STATUS_PENDING)
                 .appliedAt(app.getAppliedAt() != null ? app.getAppliedAt().format(ISO_FMT) : null)
                 .matchScore(matchScore)
                 .matchComputed(matchComputed)
@@ -463,7 +466,7 @@ public class HrService {
         return userRepository.findById(candidateId)
                 .filter(u -> u instanceof Candidate)
                 .map(u -> (Candidate) u)
-                .orElseThrow(() -> new RuntimeException("Candidate not found: " + candidateId));
+                .orElseThrow(() -> new IllegalArgumentException("Candidate not found: " + candidateId));
     }
 
     private List<ApplicantDetailResponse.DimensionScore> buildDimensions(JobMatch m) {
@@ -490,7 +493,7 @@ public class HrService {
         return Arrays.stream(value.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList());
+                .toList();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

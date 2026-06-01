@@ -39,6 +39,12 @@ import java.util.concurrent.*;
 @Slf4j
 public class CodeExecutionService {
 
+    private static final String LANG_PYTHON     = "python";
+    private static final String LANG_JAVASCRIPT = "javascript";
+    private static final String FILE_SOLUTION_PY = "solution.py";
+    private static final String FILE_SOLUTION_JS = "solution.js";
+    private static final String COMMA_SPACE_REGEX = ",\\s*";
+
     @Value("${app.code-execution.timeout-seconds:10}")
     private int timeoutSeconds;
 
@@ -50,34 +56,34 @@ public class CodeExecutionService {
 
     // Docker images per language
     private static final Map<String, String> DOCKER_IMAGES = Map.of(
-        "python",     "python:3.11-slim",
-        "javascript", "node:20-slim",
-        "java",       "openjdk:21-slim",
-        "c",          "gcc:13-slim",
-        "cpp",        "gcc:13-slim",
-        "go",         "golang:1.21-slim"
+        LANG_PYTHON,     "python:3.11-slim",
+        LANG_JAVASCRIPT, "node:20-slim",
+        "java",          "openjdk:21-slim",
+        "c",             "gcc:13-slim",
+        "cpp",           "gcc:13-slim",
+        "go",            "golang:1.21-slim"
     );
 
     private static final Map<String, String> FILE_NAMES = Map.of(
-        "python",     "solution.py",
-        "javascript", "solution.js",
-        "java",       "Main.java",
-        "c",          "solution.c",
-        "cpp",        "solution.cpp",
-        "go",         "main.go"
+        LANG_PYTHON,     FILE_SOLUTION_PY,
+        LANG_JAVASCRIPT, FILE_SOLUTION_JS,
+        "java",          "Main.java",
+        "c",             "solution.c",
+        "cpp",           "solution.cpp",
+        "go",            "main.go"
     );
 
     private static final Map<String, String[]> RUN_COMMANDS;
     static {
         boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-        String pythonCmd = isWindows ? "python" : "python3";
+        String pythonCmd = isWindows ? LANG_PYTHON : "python3";
         RUN_COMMANDS = Map.of(
-            "python",     new String[]{pythonCmd, "solution.py"},
-            "javascript", new String[]{"node", "solution.js"},
-            "java",       new String[]{"sh", "-c", "javac Main.java && java Main"},
-            "c",          new String[]{"sh", "-c", "gcc -O2 -o solution solution.c -lm && ./solution"},
-            "cpp",        new String[]{"sh", "-c", "g++ -O2 -std=c++17 -o solution solution.cpp -lm && ./solution"},
-            "go",         new String[]{"sh", "-c", "go run main.go"}
+            LANG_PYTHON,     new String[]{pythonCmd, FILE_SOLUTION_PY},
+            LANG_JAVASCRIPT, new String[]{"node", FILE_SOLUTION_JS},
+            "java",          new String[]{"sh", "-c", "javac Main.java && java Main"},
+            "c",             new String[]{"sh", "-c", "gcc -O2 -o solution solution.c -lm && ./solution"},
+            "cpp",           new String[]{"sh", "-c", "g++ -O2 -std=c++17 -o solution solution.cpp -lm && ./solution"},
+            "go",            new String[]{"sh", "-c", "go run main.go"}
         );
     }
 
@@ -193,6 +199,9 @@ public class CodeExecutionService {
                     .error(error)
                     .build();
 
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return failResult(tc, System.currentTimeMillis() - startMs, "Execution interrupted");
         } catch (Exception e) {
             log.warn("Code execution error: {}", e.getMessage());
             return failResult(tc, System.currentTimeMillis() - startMs, e.getMessage());
@@ -304,17 +313,17 @@ public class CodeExecutionService {
         
         // [[1,2],[3,4]] → "1 2\n3 4"
         if (s.startsWith("[[")) {
-            return s.replaceAll("\\[\\[", "")
-                    .replaceAll("\\]\\]", "")
+            return s.replace("[[", "")
+                    .replace("]]", "")
                     .replaceAll("\\],\\s*\\[", "\n")
-                    .replaceAll(",\\s*", " ")
+                    .replaceAll(COMMA_SPACE_REGEX, " ")
                     .trim();
         }
-        
+
         // [11] → "11"  |  [-3] → "-3"  |  [1,2,3] → "1 2 3"
         if (s.startsWith("[") && s.endsWith("]")) {
             return s.substring(1, s.length() - 1)
-                    .replaceAll(",\\s*", " ")
+                    .replaceAll(COMMA_SPACE_REGEX, " ")
                     .trim();
         }
         
@@ -340,8 +349,8 @@ public class CodeExecutionService {
 
     private String normalize(String s) {
         return s.trim()
-                .replaceAll("\r\n", "\n")
-                .replaceAll("\r", "\n")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
                 .replaceAll("[ \t]+\n", "\n")
                 .replaceAll("\n+$", "");
     }
@@ -359,10 +368,10 @@ public class CodeExecutionService {
 
         // Matrix format [[...],[...]]
         if (s.startsWith("[[")) {
-            s = s.replaceAll("\\[\\[", "")
-                 .replaceAll("\\]\\]", "")
+            s = s.replace("[[", "")
+                 .replace("]]", "")
                  .replaceAll("\\],\\s*\\[", "\n")
-                 .replaceAll(",\\s*", " ")
+                 .replaceAll(COMMA_SPACE_REGEX, " ")
                  .trim();
             return s;
         }
@@ -370,7 +379,7 @@ public class CodeExecutionService {
         // Array format [...]
         if (s.startsWith("[") && s.endsWith("]")) {
             s = s.substring(1, s.length() - 1)
-                 .replaceAll(",\\s*", " ")
+                 .replaceAll(COMMA_SPACE_REGEX, " ")
                  .trim();
             return s;
         }
@@ -410,15 +419,9 @@ public class CodeExecutionService {
                     PosixFilePermissions.asFileAttribute(perms);
             return Files.createTempDirectory("nexgen_exec_", attr);
         } catch (UnsupportedOperationException e) {
-            // Windows: fall back to default temp dir (Docker always runs on Linux)
-            Path dir = Files.createTempDirectory("nexgen_exec_");
-            dir.toFile().setReadable(false, false);
-            dir.toFile().setWritable(false, false);
-            dir.toFile().setExecutable(false, false);
-            dir.toFile().setReadable(true, true);
-            dir.toFile().setWritable(true, true);
-            dir.toFile().setExecutable(true, true);
-            return dir;
+            // Non-POSIX systems are not supported for code execution — Docker always runs on Linux
+            throw new IllegalStateException(
+                "POSIX file permissions not supported on this OS. Code execution requires Linux/Docker.", e);
         }
     }
 }

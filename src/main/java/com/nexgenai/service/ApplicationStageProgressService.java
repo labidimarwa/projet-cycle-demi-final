@@ -21,6 +21,8 @@ import java.util.List;
 @Service
 public class ApplicationStageProgressService {
 
+    private static final String CANDIDATE_APPLICATIONS_PATH = "/candidate/applications";
+
     private final ApplicationStageProgressRepository progressRepo;
     private final JobRepository                      jobRepo;
     private final JobMatchRepository                 jobMatchRepo;
@@ -196,7 +198,7 @@ public class ApplicationStageProgressService {
                             candidateId, NotificationType.TEST_ASSIGNED,
                             "New Test Available",
                             "You have a new test to complete: \"" + next.getStageName() + "\".",
-                            jobId, "JOB", "/candidate/applications"
+                            jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
                         );
                     } else if ("RH_INTERVIEW".equals(type) || "TECHNICAL_INTERVIEW".equals(type)
                             || "ADMIN_INTERVIEW".equals(type)) {
@@ -204,14 +206,14 @@ public class ApplicationStageProgressService {
                             candidateId, NotificationType.INTERVIEW_SCHEDULED,
                             "Interview Stage Activated",
                             "Your next step is an interview: \"" + next.getStageName() + "\".",
-                            jobId, "JOB", "/candidate/applications"
+                            jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
                         );
                     } else {
                         notificationService.send(
                             candidateId, NotificationType.STAGE_COMPLETED,
                             "Stage Advanced",
                             "You have been moved to the next stage: \"" + next.getStageName() + "\".",
-                            jobId, "JOB", "/candidate/applications"
+                            jobId, "JOB", CANDIDATE_APPLICATIONS_PATH
                         );
                     }
                 });

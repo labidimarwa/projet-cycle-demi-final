@@ -97,8 +97,12 @@ public class JobResponse {
     // ── Nested DTOs ───────────────────────────────────────────────────────────
 
     public static class PrerequisiteDTO {
-        private String id, type, value, icon;
-        private Boolean obligatory, customType;
+        private String id;
+        private String type;
+        private String value;
+        private String icon;
+        private Boolean obligatory;
+        private Boolean customType;
         private List<String> options;
         private Integer weight;
         private String instruction;
@@ -116,7 +120,9 @@ public class JobResponse {
     }
 
     public static class TechnicalSkillDTO {
-        private String id, name, skillType;
+        private String id;
+        private String name;
+        private String skillType;
         private Integer weight;
         private Boolean obligatory;
         public String getId() { return id; } public void setId(String id) { this.id = id; }
@@ -128,9 +134,14 @@ public class JobResponse {
     @Data
 
     public static class AssessmentDTO {
-        private String  id, name, assigneeId, assigneeName, linkId;
+        private String  id;
+        private String  name;
+        private String  assigneeId;
+        private String  assigneeName;
+        private String  linkId;
         private AssessmentType type;
-        private Integer duration, passingScore;
+        private Integer duration;
+        private Integer passingScore;
         private LocalDate submissionDeadline;
         public String getId() { return id; } public void setId(String id) { this.id = id; }
         public String getName() { return name; } public void setName(String n) { this.name = n; }
@@ -143,7 +154,12 @@ public class JobResponse {
     }
 
     public static class WorkflowStageDTO {
-        private String id, name, description, assignedTo, assigneeId, assessmentId;
+        private String id;
+        private String name;
+        private String description;
+        private String assignedTo;
+        private String assigneeId;
+        private String assessmentId;
         private Integer order;
         private StageType stageType;
 

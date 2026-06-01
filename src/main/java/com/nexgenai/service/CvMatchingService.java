@@ -19,7 +19,6 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Orchestrateur du matching CV ↔ Offre (nouvelle architecture Python + Java).
@@ -90,7 +89,7 @@ public class CvMatchingService {
 
         // ── Vérification disponibilité Python (Contrainte 4) ─────────────────
         if (!pythonClient.isAvailable()) {
-            throw new RuntimeException(
+            throw new IllegalStateException(
                 "Le microservice d'extraction IA (Python) est indisponible. " +
                 "Lancez : uvicorn main:app --host 0.0.0.0 --port 8000"
             );
@@ -98,7 +97,7 @@ public class CvMatchingService {
 
         // ── Chargement du candidat ────────────────────────────────────────────
         Candidate candidat = candidateRepository.findById(candidateId)
-            .orElseThrow(() -> new RuntimeException("Candidat introuvable : " + candidateId));
+            .orElseThrow(() -> new IllegalArgumentException("Candidat introuvable : " + candidateId));
 
         // ── Chargement CV depuis le disque si non fourni ──────────────────────
         if (cvBytes == null || cvBytes.length == 0) {
@@ -106,7 +105,7 @@ public class CvMatchingService {
             cvFilename = nomFichierCv(candidat);
         }
         if (cvBytes == null || cvBytes.length == 0) {
-            throw new RuntimeException("Aucun CV disponible pour ce candidat.");
+            throw new IllegalStateException("Aucun CV disponible pour ce candidat.");
         }
 
         // ── Cache : même CV + même poste → rapport existant (avant appel Python) ──
@@ -148,7 +147,7 @@ public class CvMatchingService {
                 m.put("obligatoire", Boolean.TRUE.equals(s.getObligatory()));
                 return m;
             })
-            .collect(Collectors.toList());
+            .toList();
 
         // ── 2. Python : MiniLM (skills) + RAG+Qwen (prérequis) ───────────────
         // jobId passed so Python can reuse pre-indexed job embeddings (computed at job creation)
@@ -202,10 +201,10 @@ public class CvMatchingService {
         // Partition skills by type for weighted sub-scores
         List<SkillMatchResult> techResults = resultatsSkills.stream()
             .filter(r -> !"SOFT".equalsIgnoreCase(r.getSkillType()))
-            .collect(Collectors.toList());
+            .toList();
         List<SkillMatchResult> softResults = resultatsSkills.stream()
             .filter(r -> "SOFT".equalsIgnoreCase(r.getSkillType()))
-            .collect(Collectors.toList());
+            .toList();
 
         double scoreTech = calculerScoreSkills(techResults);
         double scoreSoft = calculerScoreSkills(softResults);
@@ -219,7 +218,7 @@ public class CvMatchingService {
         } else if (softResults.isEmpty() && !techResults.isEmpty()) {
             scoreSkills = scoreTech;
         } else if (!techResults.isEmpty() && !softResults.isEmpty()) {
-            scoreSkills = arrondir((scoreTech * wTech + scoreSoft * wSoft) / (double)(wTech + wSoft));
+            scoreSkills = arrondir((scoreTech * wTech + scoreSoft * wSoft) / (wTech + wSoft));
         } else {
             scoreSkills = 0.0;
         }
@@ -303,7 +302,7 @@ public class CvMatchingService {
                 Candidate c = candidateRepository.findById(r.getCandidateId()).orElse(new Candidate());
                 return deserialiserRapport(r, job, c);
             })
-            .collect(Collectors.toList());
+            .toList();
     }
 
 
@@ -329,7 +328,7 @@ public class CvMatchingService {
         log.info("📥 Skills du job à matcher : {}",
             skillsPoste.stream()
                 .map(s -> s.getName() + "[" + s.getSkillType() + "]")
-                .collect(Collectors.toList())
+                .toList()
         );
         if (skillsEvalues != null) {
         	skillsEvalues.forEach(e -> {
@@ -368,7 +367,8 @@ public class CvMatchingService {
 
     /** Score pondéré des compétences — utilise directement le score MiniLM 0–1 × 100. */
     private double calculerScoreSkills(List<SkillMatchResult> resultats) {
-        double poids = 0, total = 0;
+        double poids = 0;
+        double total = 0;
         for (SkillMatchResult r : resultats) {
             total += r.getSimilarite() * 100.0 * r.getPoids();
             poids += r.getPoids();
@@ -427,7 +427,8 @@ public class CvMatchingService {
 
     private double calculerScorePrerequisites(List<PrerequisiteMatchResult> resultats) {
         if (resultats.isEmpty()) return 100.0;
-        double totalPondere = 0, totalPoids = 0;
+        double totalPondere = 0;
+        double totalPoids = 0;
         for (PrerequisiteMatchResult r : resultats) {
             int p = r.getPoids() > 0 ? r.getPoids() : 100;
             totalPondere += r.getScoreMatch() * p;
@@ -510,10 +511,10 @@ public class CvMatchingService {
             // Recalcul des sous-scores tech/soft depuis les données stockées
             List<SkillMatchResult> techSkills = skills.stream()
                 .filter(s -> !"SOFT".equalsIgnoreCase(s.getSkillType()))
-                .collect(Collectors.toList());
+                .toList();
             List<SkillMatchResult> softSkills = skills.stream()
                 .filter(s -> "SOFT".equalsIgnoreCase(s.getSkillType()))
-                .collect(Collectors.toList());
+                .toList();
 
             return MatchingReportDTO.builder()
                 .id(r.getId())

@@ -35,7 +35,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 /**
  * Phase 2 refactoring: updated to use unified Assessment, TestSession models
@@ -158,7 +157,7 @@ public class CandidateController {
                         p.getCompletedAt() != null ? p.getCompletedAt().toString() : null,
                         p.getHrNote()
                 ))
-                .collect(Collectors.toList());
+                .toList();
 
         return ResponseEntity.ok(dtos);
     }
@@ -232,7 +231,7 @@ public class CandidateController {
                 emitter.send(SseEmitter.event().name("match-error")
                     .data(objectMapper.writeValueAsString(Map.of("error", "No CV uploaded"))));
                 emitter.complete();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) { // intentionally empty
             return emitter;
         }
 

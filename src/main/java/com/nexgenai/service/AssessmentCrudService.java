@@ -29,6 +29,14 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AssessmentCrudService {
 
+    private static final String THEME_NOT_FOUND    = "Theme not found";
+    private static final String QUESTION_NOT_FOUND = "Question not found";
+    private static final String COLOR_AMBER        = "#f59e0b";
+    private static final String COLOR_GREEN        = "#10b981";
+    private static final String TYPE_PROBLEM_SOLVING = "PROBLEM_SOLVING";
+    private static final String TYPE_CUSTOM        = "CUSTOM";
+    private static final String TYPE_LOGIC         = "LOGIC";
+
     private final AssessmentRepository        assessmentRepository;
     private final TestThemeRepository         themeRepository;
     private final ThemeModelRepository        themeModelRepository;
@@ -66,7 +74,7 @@ public class AssessmentCrudService {
             if ("HR".equals(role)) {
                 assessments = assessments.stream()
                     .filter(a -> a.getType() == AssessmentType.RH)
-                    .collect(Collectors.toList());
+                    .toList();
             }
 
             for (Assessment a : assessments) {
@@ -105,13 +113,13 @@ public class AssessmentCrudService {
     @Transactional
     public JobTestResponse configureFromStage(String workflowStageId, String jobId) {
         assessmentRepository.findByWorkflowStageId(workflowStageId).ifPresent(existing -> {
-            throw new RuntimeException("Assessment already configured for this stage");
+            throw new IllegalStateException("Assessment already configured for this stage");
         });
 
         Job job = findJob(jobId);
         WorkflowStage stage = job.getWorkflowStages().stream()
             .filter(s -> s.getId().equals(workflowStageId)).findFirst()
-            .orElseThrow(() -> new RuntimeException("Stage not found"));
+            .orElseThrow(() -> new IllegalArgumentException("Stage not found"));
 
         AssessmentType type = stage.getStageType() == StageType.RH_TEST
             ? AssessmentType.RH : AssessmentType.TECHNICAL;
@@ -131,7 +139,7 @@ public class AssessmentCrudService {
     @Transactional(readOnly = true)
     public List<JobTestResponse> getAllTests() {
         return assessmentRepository.findAllWithJob().stream()
-            .map(this::mapAssessmentSummary).collect(Collectors.toList());
+            .map(this::mapAssessmentSummary).toList();
     }
 
     @Transactional(readOnly = true)
@@ -187,7 +195,8 @@ public class AssessmentCrudService {
         if (req.getDescription() != null) assessment.setDescription(req.getDescription());
         if (req.getStatus()      != null) {
             try { assessment.setStatus(Assessment.AssessmentStatus.valueOf(req.getStatus())); }
-            catch (IllegalArgumentException ignored) {}
+            catch (IllegalArgumentException ignored) { // intentionally empty
+            }
         }
 
         if (req.getThemes() == null || req.getThemes().isEmpty()) {
@@ -201,7 +210,7 @@ public class AssessmentCrudService {
             .filter(id -> id != null && existingThemeIds.contains(id))
             .collect(Collectors.toSet());
         List<String> toDeleteIds = existingThemeIds.stream()
-            .filter(id -> !incomingThemeIds.contains(id)).collect(Collectors.toList());
+            .filter(id -> !incomingThemeIds.contains(id)).toList();
 
         for (String orphanId : toDeleteIds) {
             questionRepository.deleteByThemeId(orphanId);
@@ -244,9 +253,9 @@ public class AssessmentCrudService {
     @Transactional
     public void deleteTheme(String assessmentId, String themeId) {
         TestTheme theme = themeRepository.findById(themeId)
-            .orElseThrow(() -> new RuntimeException("Theme not found"));
+            .orElseThrow(() -> new IllegalArgumentException(THEME_NOT_FOUND));
         if (!theme.getAssessment().getId().equals(assessmentId))
-            throw new RuntimeException("Theme does not belong to this assessment");
+            throw new IllegalArgumentException("Theme does not belong to this assessment");
         questionRepository.deleteByThemeId(themeId);
         themeRepository.delete(theme);
     }
@@ -258,13 +267,13 @@ public class AssessmentCrudService {
     @Transactional
     public JobTestResponse addModelToTheme(String assessmentId, String themeId, AddModelRequest req) {
         TestTheme theme = themeRepository.findById(themeId)
-            .orElseThrow(() -> new RuntimeException("Theme not found"));
+            .orElseThrow(() -> new IllegalArgumentException(THEME_NOT_FOUND));
         if (!theme.getAssessment().getId().equals(assessmentId))
-            throw new RuntimeException("Theme mismatch");
+            throw new IllegalArgumentException("Theme mismatch");
         if (themeModelRepository.existsByThemeIdAndModelId(themeId, req.getModelId()))
-            throw new RuntimeException("Model already added");
+            throw new IllegalStateException("Model already added");
         PsychometricModel model = modelRepository.findById(req.getModelId())
-            .orElseThrow(() -> new RuntimeException("Model not found"));
+            .orElseThrow(() -> new IllegalArgumentException("Model not found"));
         ThemeModel tm = ThemeModel.builder()
             .model(model).weight(req.getWeight() != null ? req.getWeight() : 50)
             .orderIndex(theme.getThemeModels().size()).build();
@@ -277,7 +286,7 @@ public class AssessmentCrudService {
     public void updateThemeModelWeight(String assessmentId, String themeId,
                                        String themeModelId, UpdateWeightRequest req) {
         ThemeModel tm = themeModelRepository.findById(themeModelId)
-            .orElseThrow(() -> new RuntimeException("ThemeModel not found"));
+            .orElseThrow(() -> new IllegalArgumentException("ThemeModel not found"));
         tm.setWeight(req.getWeight());
         themeModelRepository.save(tm);
     }
@@ -294,7 +303,7 @@ public class AssessmentCrudService {
     @Transactional
     public QuestionResponse addPsychometricQuestion(String themeModelId, CreateQuestionRequest req) {
         ThemeModel tm = themeModelRepository.findById(themeModelId)
-            .orElseThrow(() -> new RuntimeException("ThemeModel not found"));
+            .orElseThrow(() -> new IllegalArgumentException("ThemeModel not found"));
         Question q = Question.builder()
             .text(req.getText()).kind(Question.QuestionKind.QCM)
             .questionType(Question.QuestionType.valueOf(req.getType().toUpperCase()))
@@ -317,7 +326,7 @@ public class AssessmentCrudService {
     @Transactional
     public QuestionResponse updatePsychometricQuestion(String questionId, CreateQuestionRequest req) {
         Question q = questionRepository.findById(questionId)
-            .orElseThrow(() -> new RuntimeException("Question not found"));
+            .orElseThrow(() -> new IllegalArgumentException(QUESTION_NOT_FOUND));
         q.setText(req.getText());
         q.setQuestionType(Question.QuestionType.valueOf(req.getType().toUpperCase()));
         q.getOptions().clear();
@@ -339,9 +348,10 @@ public class AssessmentCrudService {
         FileSecurityValidator.ValidationResult vr = fileSecurityValidator.validate(file, extractClientIp());
         if (!vr.valid()) throw new IllegalArgumentException("Image file rejected: " + vr.reason());
         Question q = questionRepository.findById(questionId)
-            .orElseThrow(() -> new RuntimeException("Question not found"));
+            .orElseThrow(() -> new IllegalArgumentException(QUESTION_NOT_FOUND));
         if (q.getImagePath() != null)
-            try { Files.deleteIfExists(Paths.get(q.getImagePath())); } catch (IOException ignored) {}
+            try { Files.deleteIfExists(Paths.get(q.getImagePath())); } catch (IOException ignored) { // intentionally empty
+            }
         String ext      = getExtension(file.getOriginalFilename());
         String filename = questionId + "_" + System.currentTimeMillis() + ext;
         Path dir = Paths.get(imageDir); Files.createDirectories(dir);
@@ -360,14 +370,15 @@ public class AssessmentCrudService {
                 if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
                 return req.getRemoteAddr();
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { // intentionally empty
+        }
         return "unknown";
     }
 
     @Transactional
     public void deleteQuestionImage(String questionId) throws IOException {
         Question q = questionRepository.findById(questionId)
-            .orElseThrow(() -> new RuntimeException("Question not found"));
+            .orElseThrow(() -> new IllegalArgumentException(QUESTION_NOT_FOUND));
         if (q.getImagePath() != null) {
             Files.deleteIfExists(Paths.get(q.getImagePath()));
             q.setImagePath(null);
@@ -378,9 +389,10 @@ public class AssessmentCrudService {
     @Transactional
     public void deleteQuestion(String questionId) {
         Question q = questionRepository.findById(questionId)
-            .orElseThrow(() -> new RuntimeException("Question not found"));
+            .orElseThrow(() -> new IllegalArgumentException(QUESTION_NOT_FOUND));
         if (q.getImagePath() != null)
-            try { Files.deleteIfExists(Paths.get(q.getImagePath())); } catch (IOException ignored) {}
+            try { Files.deleteIfExists(Paths.get(q.getImagePath())); } catch (IOException ignored) { // intentionally empty
+            }
         questionRepository.delete(q);
     }
 
@@ -393,7 +405,7 @@ public class AssessmentCrudService {
                                                     SaveFullTestRequest.QuestionPayload req,
                                                     String type) {
         TestTheme theme = themeRepository.findById(themeId)
-            .orElseThrow(() -> new RuntimeException("Theme not found"));
+            .orElseThrow(() -> new IllegalArgumentException(THEME_NOT_FOUND));
         return mapSimpleQuestion(questionRepository.save(buildQuestion(req, theme, type)));
     }
 
@@ -401,7 +413,7 @@ public class AssessmentCrudService {
     public SimpleQuestionResponse updateSimpleQuestion(String questionId,
                                                        SaveFullTestRequest.QuestionPayload req) {
         Question q = questionRepository.findById(questionId)
-            .orElseThrow(() -> new RuntimeException("Question not found"));
+            .orElseThrow(() -> new IllegalArgumentException(QUESTION_NOT_FOUND));
         q.setTitle(req.getTitle());
         q.setStatement(req.getStatement());
         q.setPoints(req.getPoints());
@@ -429,13 +441,13 @@ public class AssessmentCrudService {
     @Transactional(readOnly = true)
     public List<ModelResponse> getAllModels() {
         return modelRepository.findAllByOrderByBuiltInDescNameAsc().stream()
-            .map(this::mapModel).collect(Collectors.toList());
+            .map(this::mapModel).toList();
     }
 
     @Transactional
     public ModelResponse createModel(CreateModelRequest req) {
         if (modelRepository.existsByName(req.getName()))
-            throw new RuntimeException("A model with this name already exists");
+            throw new IllegalStateException("A model with this name already exists");
         PsychometricModel model = PsychometricModel.builder()
             .name(req.getName()).description(req.getDescription())
             .scoringType(PsychometricModel.ScoringType.valueOf(req.getScoringType().toUpperCase()))
@@ -457,20 +469,20 @@ public class AssessmentCrudService {
         modelRepository.save(buildModel("DISC Behavioral Profile",
             "Dominance, Influence, Steadiness, Conscientiousness",
             PsychometricModel.ScoringType.SUM,
-            List.of(dim("Dominance","D","#ef4444",0), dim("Influence","I","#f59e0b",1),
-                    dim("Steadiness","S","#10b981",2), dim("Conscientiousness","C","#6366f1",3))));
+            List.of(dim("Dominance","D","#ef4444",0), dim("Influence","I",COLOR_AMBER,1),
+                    dim("Steadiness","S",COLOR_GREEN,2), dim("Conscientiousness","C","#6366f1",3))));
         modelRepository.save(buildModel("Big Five (OCEAN)",
             "Openness, Conscientiousness, Extraversion, Agreeableness, Neuroticism",
             PsychometricModel.ScoringType.AVERAGE,
             List.of(dim("Openness","O","#8b5cf6",0), dim("Conscientiousness","C","#3b82f6",1),
-                    dim("Extraversion","E","#f59e0b",2), dim("Agreeableness","A","#10b981",3),
+                    dim("Extraversion","E",COLOR_AMBER,2), dim("Agreeableness","A",COLOR_GREEN,3),
                     dim("Neuroticism","N","#ef4444",4))));
         modelRepository.save(buildModel("Emotional Intelligence (EQ-i)",
             "Self-awareness, regulation, motivation, empathy, social skills",
             PsychometricModel.ScoringType.WEIGHTED,
             List.of(dim("Self-Awareness","SA","#06b6d4",0), dim("Self-Regulation","SR","#8b5cf6",1),
-                    dim("Motivation","M","#f59e0b",2), dim("Empathy","EM","#ec4899",3),
-                    dim("Social Skills","SS","#10b981",4))));
+                    dim("Motivation","M",COLOR_AMBER,2), dim("Empathy","EM","#ec4899",3),
+                    dim("Social Skills","SS",COLOR_GREEN,4))));
         log.info("Built-in psychometric models initialized");
     }
 
@@ -498,20 +510,20 @@ public class AssessmentCrudService {
             .themesCount(a.getThemes().size())
             .questionsCount(countAllQuestions(a)).candidatesCount(0).completionRate(0)
             .createdAt(a.getCreatedAt())
-            .themes(a.getThemes().stream().map(this::mapTheme).collect(Collectors.toList()))
+            .themes(a.getThemes().stream().map(this::mapTheme).toList())
             .build();
     }
 
     private ThemeResponse mapTheme(TestTheme th) {
         List<SimpleQuestionResponse> simpleQs = questionRepository
             .findByThemeIdOrderByOrderIndex(th.getId())
-            .stream().map(this::mapSimpleQuestion).collect(Collectors.toList());
+            .stream().map(this::mapSimpleQuestion).toList();
         List<ThemeModelResponse> models = th.getThemeModels().stream()
-            .map(this::mapThemeModel).collect(Collectors.toList());
-        String frontType = (th.getCategory() == TestTheme.ThemeCategory.LOGIC) ? "PROBLEM_SOLVING" : "QCM";
+            .map(this::mapThemeModel).toList();
+        String frontType = (th.getCategory() == TestTheme.ThemeCategory.LOGIC) ? TYPE_PROBLEM_SOLVING : "QCM";
         return ThemeResponse.builder()
             .id(th.getId()).name(th.getName())
-            .category(th.getCategory() != null ? th.getCategory().name() : "CUSTOM")
+            .category(th.getCategory() != null ? th.getCategory().name() : TYPE_CUSTOM)
             .type(frontType).orderIndex(th.getOrderIndex() != null ? th.getOrderIndex() : 0)
             .models(models).questions(simpleQs).build();
     }
@@ -526,8 +538,8 @@ public class AssessmentCrudService {
                 .sorted(Comparator.comparingInt(d -> d.getOrderIndex() != null ? d.getOrderIndex() : 0))
                 .map(d -> DimensionResponse.builder()
                     .id(d.getId()).name(d.getName()).code(d.getCode()).color(d.getColor()).build())
-                .collect(Collectors.toList()))
-            .questions(tm.getQuestions().stream().map(this::mapPsychometricQuestion).collect(Collectors.toList()))
+                .toList())
+            .questions(tm.getQuestions().stream().map(this::mapPsychometricQuestion).toList())
             .build();
     }
 
@@ -543,7 +555,7 @@ public class AssessmentCrudService {
                 .map(o -> OptionResponse.builder()
                     .id(o.getId()).text(o.getText()).dimensionId(o.getDimensionId())
                     .points(o.getPoints()).orderIndex(o.getOrderIndex() != null ? o.getOrderIndex() : 0).build())
-                .collect(Collectors.toList()))
+                .toList())
             .build();
     }
 
@@ -559,13 +571,13 @@ public class AssessmentCrudService {
                 ? q.getTestCases().stream().map(tc -> TestCaseResponse.builder()
                     .input(tc.getInput()).output(tc.getOutput()).points(tc.getPoints())
                     .visible(tc.isVisible()).build())
-                    .collect(Collectors.toList()) : Collections.emptyList())
+                    .toList() : Collections.emptyList())
             .supportedLangs(q.getSupportedLangs())
             .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : null)
             .options(q.getQcmOptions() != null
                 ? q.getQcmOptions().stream().map(o -> QcmOptionResponse.builder()
                     .text(o.getText()).correct(o.isCorrect()).points(o.getPoints()).build())
-                    .collect(Collectors.toList()) : Collections.emptyList())
+                    .toList() : Collections.emptyList())
             .likertPoints(q.getLikertPoints()).imageUrl(imageUrl).build();
     }
 
@@ -577,7 +589,7 @@ public class AssessmentCrudService {
                 .sorted(Comparator.comparingInt(d -> d.getOrderIndex() != null ? d.getOrderIndex() : 0))
                 .map(d -> DimensionResponse.builder()
                     .id(d.getId()).name(d.getName()).code(d.getCode()).color(d.getColor()).build())
-                .collect(Collectors.toList()))
+                .toList())
             .build();
     }
 
@@ -586,7 +598,7 @@ public class AssessmentCrudService {
     // ══════════════════════════════════════════════════════════════════════════
 
     private Question buildQuestion(SaveFullTestRequest.QuestionPayload qp, TestTheme theme, String type) {
-        Question.QuestionKind kind = "PROBLEM_SOLVING".equalsIgnoreCase(type)
+        Question.QuestionKind kind = TYPE_PROBLEM_SOLVING.equalsIgnoreCase(type)
             ? Question.QuestionKind.PROBLEM_SOLVING : Question.QuestionKind.QCM;
 
         Question.QuestionBuilder builder = Question.builder()
@@ -615,7 +627,7 @@ public class AssessmentCrudService {
                 TestTheme theme = existing.get();
                 if (thPayload.getName() != null) theme.setName(thPayload.getName());
                 if (thPayload.getType() != null)
-                    theme.setCategory(mapTypeToCategory(thPayload.getType()).equals("LOGIC")
+                    theme.setCategory(mapTypeToCategory(thPayload.getType()).equals(TYPE_LOGIC)
                         ? TestTheme.ThemeCategory.LOGIC : TestTheme.ThemeCategory.CUSTOM);
                 theme.setOrderIndex(thPayload.getOrderIndex());
                 return themeRepository.save(theme);
@@ -624,7 +636,7 @@ public class AssessmentCrudService {
         return themeRepository.save(TestTheme.builder()
             .assessment(assessment)
             .name(thPayload.getName() != null ? thPayload.getName() : "Theme")
-            .category(mapTypeToCategory(thPayload.getType()).equals("LOGIC")
+            .category(mapTypeToCategory(thPayload.getType()).equals(TYPE_LOGIC)
                 ? TestTheme.ThemeCategory.LOGIC : TestTheme.ThemeCategory.CUSTOM)
             .orderIndex(thPayload.getOrderIndex()).build());
     }
@@ -640,12 +652,12 @@ public class AssessmentCrudService {
 
     public Assessment findAssessment(String id) {
         return assessmentRepository.findByIdWithThemes(id)
-            .orElseThrow(() -> new RuntimeException("Assessment not found: " + id));
+            .orElseThrow(() -> new IllegalArgumentException("Assessment not found: " + id));
     }
 
     private Job findJob(String id) {
         return jobRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("Job not found: " + id));
+            .orElseThrow(() -> new IllegalArgumentException("Job not found: " + id));
     }
 
     private List<Question.TestCase> mapTestCases(List<SaveFullTestRequest.TestCasePayload> tcs) {
@@ -654,19 +666,19 @@ public class AssessmentCrudService {
             tc.getInput(), tc.getOutput(),
             tc.getPoints() != null ? tc.getPoints() : 10,
             tc.getVisible() != null ? tc.getVisible() : true))
-            .collect(Collectors.toList());
+            .toList();
     }
 
     private List<Question.QcmOption> mapQcmOptions(List<SaveFullTestRequest.QcmOptionPayload> opts) {
         if (opts == null) return Collections.emptyList();
         return opts.stream().map(o -> new Question.QcmOption(
             null, o.getText(), o.isCorrect(), o.getPoints() != null ? o.getPoints() : 0))
-            .collect(Collectors.toList());
+            .toList();
     }
 
     private String mapTypeToCategory(String frontendType) {
-        if (frontendType == null) return "CUSTOM";
-        return "PROBLEM_SOLVING".equalsIgnoreCase(frontendType) ? "LOGIC" : "CUSTOM";
+        if (frontendType == null) return TYPE_CUSTOM;
+        return TYPE_PROBLEM_SOLVING.equalsIgnoreCase(frontendType) ? TYPE_LOGIC : TYPE_CUSTOM;
     }
 
     private PsychometricModel buildModel(String name, String desc,

@@ -1,4 +1,4 @@
-package com.nexgenai.service;
+﻿package com.nexgenai.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexgenai.dto.matching.CvExtractionResult;
@@ -18,22 +18,22 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Tests unitaires — CvMatchingService (matching CV ↔ Offre)
+ * Tests unitaires â€” CvMatchingService (matching CV â†” Offre)
  *
- * Scénarios couverts :
- *   TC-SC-01  Python indisponible                    → RuntimeException message explicite
- *   TC-SC-02  CV non uploadé (cvPath null)           → RuntimeException "Aucun CV disponible"
- *   TC-SC-03  Candidat introuvable                   → RuntimeException
- *   TC-SC-04  Cache hit (même cvHash)                → rapport retourné sans appel Python
- *   TC-SC-05  Skill obligatoire manquant (sim < 0.50)→ forceRejet=true, scoreGlobal=0
- *   TC-SC-06  Prérequis obligatoire score < 0.40     → forceRejet=true, scoreGlobal=0
- *   TC-SC-07  Tous les skills matchent parfaitement  → scoreGlobal > 0, RETENIR
- *   TC-SC-08  Score global ≥ 75                      → recommendation = RETENIR
- *   TC-SC-09  Score global 50–74                     → recommendation = A_ETUDIER
- *   TC-SC-10  Score global < 50                      → recommendation = REJETER
+ * ScÃ©narios couverts :
+ *   TC-SC-01  Python indisponible                    â†’ RuntimeException message explicite
+ *   TC-SC-02  CV non uploadÃ© (cvPath null)           â†’ RuntimeException "Aucun CV disponible"
+ *   TC-SC-03  Candidat introuvable                   â†’ RuntimeException
+ *   TC-SC-04  Cache hit (mÃªme cvHash)                â†’ rapport retournÃ© sans appel Python
+ *   TC-SC-05  Skill obligatoire manquant (sim < 0.50)â†’ forceRejet=true, scoreGlobal=0
+ *   TC-SC-06  PrÃ©requis obligatoire score < 0.40     â†’ forceRejet=true, scoreGlobal=0
+ *   TC-SC-07  Tous les skills matchent parfaitement  â†’ scoreGlobal > 0, RETENIR
+ *   TC-SC-08  Score global â‰¥ 75                      â†’ recommendation = RETENIR
+ *   TC-SC-09  Score global 50â€“74                     â†’ recommendation = A_ETUDIER
+ *   TC-SC-10  Score global < 50                      â†’ recommendation = REJETER
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("CvMatchingService — Tests Unitaires")
+@DisplayName("CvMatchingService â€” Tests Unitaires")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CvMatchingServiceTest {
 
@@ -53,7 +53,7 @@ class CvMatchingServiceTest {
 
     @BeforeEach
     void injectThresholds() {
-        // @Value fields not populated by @InjectMocks — inject manually
+        // @Value fields not populated by @InjectMocks â€” inject manually
         ReflectionTestUtils.setField(svc, "seuilMatch",    0.75);
         ReflectionTestUtils.setField(svc, "seuilPartiel",  0.50);
         ReflectionTestUtils.setField(svc, "seuilRetenir",  75.0);
@@ -62,7 +62,7 @@ class CvMatchingServiceTest {
         ReflectionTestUtils.setField(svc, "objectMapper",  new ObjectMapper());
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private Candidate makeCandidate() {
         Candidate c = new Candidate();
@@ -70,12 +70,6 @@ class CvMatchingServiceTest {
         c.setLastName("Martin");
         c.setEmail("alice@example.com");
         c.setCvPath(null);   // no CV stored by default
-        return c;
-    }
-
-    private Candidate makeCandidateWithCv() {
-        Candidate c = makeCandidate();
-        c.setCvPath("original.pdf|stored.pdf");
         return c;
     }
 
@@ -92,7 +86,7 @@ class CvMatchingServiceTest {
         return job;
     }
 
-    private TechnicalSkill makeSkill(String name, boolean obligatory, double scoreFromPython) {
+    private TechnicalSkill makeSkill(String name, boolean obligatory) {
         TechnicalSkill s = new TechnicalSkill();
         s.setName(name);
         s.setObligatory(obligatory);
@@ -133,13 +127,13 @@ class CvMatchingServiceTest {
         return r;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-01 — Python indisponible
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-01 â€” Python indisponible
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(1)
-    @DisplayName("TC-SC-01 : Python indisponible → RuntimeException avec message explicite")
+    @DisplayName("TC-SC-01 : Python indisponible â†’ RuntimeException avec message explicite")
     void lancerMatching_pythonUnavailable_throwsWithMessage() {
         // Given
         when(pythonClient.isAvailable()).thenReturn(false);
@@ -155,19 +149,19 @@ class CvMatchingServiceTest {
         verify(candidateRepository, never()).findById(any());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-02 — CV non uploadé
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-02 â€” CV non uploadÃ©
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(2)
-    @DisplayName("TC-SC-02 : CV non uploadé (cvPath null + cvBytes null) → RuntimeException 'Aucun CV disponible'")
+    @DisplayName("TC-SC-02 : CV non uploadÃ© (cvPath null + cvBytes null) â†’ RuntimeException 'Aucun CV disponible'")
     void lancerMatching_noCvStored_throwsNoCvAvailable() {
         // Given
         when(pythonClient.isAvailable()).thenReturn(true);
         when(candidateRepository.findById(CANDIDATE_ID)).thenReturn(Optional.of(makeCandidate()));
 
-        // When / Then — pass null bytes; candidate has no cvPath
+        // When / Then â€” pass null bytes; candidate has no cvPath
         RuntimeException ex = assertThrows(RuntimeException.class,
             () -> svc.lancerMatching(JOB_ID, CANDIDATE_ID, null, CV_FILENAME));
 
@@ -176,13 +170,13 @@ class CvMatchingServiceTest {
             "Message should mention missing CV, got: " + ex.getMessage());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-03 — Candidat introuvable
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-03 â€” Candidat introuvable
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(3)
-    @DisplayName("TC-SC-03 : Candidat introuvable → RuntimeException")
+    @DisplayName("TC-SC-03 : Candidat introuvable â†’ RuntimeException")
     void lancerMatching_candidateNotFound_throwsRuntimeException() {
         // Given
         when(pythonClient.isAvailable()).thenReturn(true);
@@ -197,13 +191,13 @@ class CvMatchingServiceTest {
             "Message should mention candidate not found, got: " + ex.getMessage());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-04 — Cache hit
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-04 â€” Cache hit
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(4)
-    @DisplayName("TC-SC-04 : Cache hit (même cvHash) → rapport retourné sans appel Python")
+    @DisplayName("TC-SC-04 : Cache hit (mÃªme cvHash) â†’ rapport retournÃ© sans appel Python")
     void lancerMatching_cacheHit_returnsCachedReportWithoutCallingPython() {
         // Given
         when(pythonClient.isAvailable()).thenReturn(true);
@@ -232,19 +226,19 @@ class CvMatchingServiceTest {
         verify(pythonClient, never()).extraireCv(any(), any(), any(), any(), any());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-05 — Skill obligatoire manquant → rejet forcé
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-05 â€” Skill obligatoire manquant â†’ rejet forcÃ©
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(5)
-    @DisplayName("TC-SC-05 : Skill obligatoire similarity < 0.50 → forceRejet=true, scoreGlobal=0")
+    @DisplayName("TC-SC-05 : Skill obligatoire similarity < 0.50 â†’ forceRejet=true, scoreGlobal=0")
     void lancerMatching_missingMandatorySkill_forcesRejection() throws Exception {
         // Given
         when(pythonClient.isAvailable()).thenReturn(true);
         when(candidateRepository.findById(CANDIDATE_ID)).thenReturn(Optional.of(makeCandidate()));
 
-        TechnicalSkill mandatorySkill = makeSkill("Java", true, 0.0);
+        TechnicalSkill mandatorySkill = makeSkill("Java", true);
         Job job = makeJob(List.of(mandatorySkill), Collections.emptyList());
         when(jobRepository.findByIdWithSkills(JOB_ID)).thenReturn(Optional.of(job));
         when(jobRepository.findByIdWithPrerequisites(JOB_ID)).thenReturn(Optional.of(job));
@@ -283,13 +277,13 @@ class CvMatchingServiceTest {
             "Reason should mention missing skill, got: " + dto.getForceRejetRaison());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-06 — Prérequis obligatoire non satisfait → rejet forcé
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-06 â€” PrÃ©requis obligatoire non satisfait â†’ rejet forcÃ©
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(6)
-    @DisplayName("TC-SC-06 : Prérequis obligatoire score < 0.40 → forceRejet=true, scoreGlobal=0")
+    @DisplayName("TC-SC-06 : PrÃ©requis obligatoire score < 0.40 â†’ forceRejet=true, scoreGlobal=0")
     void lancerMatching_missingMandatoryPrereq_forcesRejection() throws Exception {
         // Given
         when(pythonClient.isAvailable()).thenReturn(true);
@@ -338,20 +332,20 @@ class CvMatchingServiceTest {
         assertEquals("REJETER", dto.getRecommendation());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-07 — Score = 100% (profil parfait)
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-07 â€” Score = 100% (profil parfait)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(7)
-    @DisplayName("TC-SC-07 : Tous les skills à 1.0 → scoreGlobal = 100, recommendation = RETENIR")
+    @DisplayName("TC-SC-07 : Tous les skills Ã  1.0 â†’ scoreGlobal = 100, recommendation = RETENIR")
     void lancerMatching_perfectMatch_score100AndRetenir() throws Exception {
         // Given
         when(pythonClient.isAvailable()).thenReturn(true);
         when(candidateRepository.findById(CANDIDATE_ID)).thenReturn(Optional.of(makeCandidate()));
 
-        TechnicalSkill s1 = makeSkill("Java",       false, 1.0);
-        TechnicalSkill s2 = makeSkill("Spring Boot", false, 1.0);
+        TechnicalSkill s1 = makeSkill("Java",       false);
+        TechnicalSkill s2 = makeSkill("Spring Boot", false);
         Job job = makeJob(List.of(s1, s2), Collections.emptyList());
         when(jobRepository.findByIdWithSkills(JOB_ID)).thenReturn(Optional.of(job));
         when(jobRepository.findByIdWithPrerequisites(JOB_ID)).thenReturn(Optional.of(job));
@@ -385,19 +379,19 @@ class CvMatchingServiceTest {
         assertEquals("RETENIR", dto.getRecommendation());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-08 — Recommandation RETENIR (score ≥ 75)
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-08 â€” Recommandation RETENIR (score â‰¥ 75)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(8)
-    @DisplayName("TC-SC-08 : scoreGlobal ≥ 75 → recommendation = RETENIR")
+    @DisplayName("TC-SC-08 : scoreGlobal â‰¥ 75 â†’ recommendation = RETENIR")
     void lancerMatching_scoreAbove75_recommendsRetenir() throws Exception {
-        // Given — skills match at 0.80 (score = 80%)
+        // Given â€” skills match at 0.80 (score = 80%)
         when(pythonClient.isAvailable()).thenReturn(true);
         when(candidateRepository.findById(CANDIDATE_ID)).thenReturn(Optional.of(makeCandidate()));
 
-        TechnicalSkill skill = makeSkill("Python", false, 0.80);
+        TechnicalSkill skill = makeSkill("Python", false);
         Job job = makeJob(List.of(skill), Collections.emptyList());
         when(jobRepository.findByIdWithSkills(JOB_ID)).thenReturn(Optional.of(job));
         when(jobRepository.findByIdWithPrerequisites(JOB_ID)).thenReturn(Optional.of(job));
@@ -422,19 +416,19 @@ class CvMatchingServiceTest {
         assertTrue(dto.getScoreGlobal() >= 75.0);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-09 — Recommandation A_ETUDIER (score 50–74)
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-09 â€” Recommandation A_ETUDIER (score 50â€“74)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(9)
-    @DisplayName("TC-SC-09 : scoreGlobal = 60 → recommendation = A_ETUDIER")
+    @DisplayName("TC-SC-09 : scoreGlobal = 60 â†’ recommendation = A_ETUDIER")
     void lancerMatching_score60_recommendsAEtudier() throws Exception {
-        // Given — skill at 0.60
+        // Given â€” skill at 0.60
         when(pythonClient.isAvailable()).thenReturn(true);
         when(candidateRepository.findById(CANDIDATE_ID)).thenReturn(Optional.of(makeCandidate()));
 
-        TechnicalSkill skill = makeSkill("Docker", false, 0.60);
+        TechnicalSkill skill = makeSkill("Docker", false);
         Job job = makeJob(List.of(skill), Collections.emptyList());
         when(jobRepository.findByIdWithSkills(JOB_ID)).thenReturn(Optional.of(job));
         when(jobRepository.findByIdWithPrerequisites(JOB_ID)).thenReturn(Optional.of(job));
@@ -458,19 +452,19 @@ class CvMatchingServiceTest {
         assertEquals("A_ETUDIER", dto.getRecommendation());
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // TC-SC-10 — Recommandation REJETER (score < 50, pas de rejet forcé)
-    // ══════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TC-SC-10 â€” Recommandation REJETER (score < 50, pas de rejet forcÃ©)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @Test
     @Order(10)
-    @DisplayName("TC-SC-10 : scoreGlobal < 50 → recommendation = REJETER (sans rejet forcé)")
+    @DisplayName("TC-SC-10 : scoreGlobal < 50 â†’ recommendation = REJETER (sans rejet forcÃ©)")
     void lancerMatching_scoreBelowThreshold_recommendsRejeter() throws Exception {
-        // Given — non-mandatory skill at 0.30 → score ≈ 30%
+        // Given â€” non-mandatory skill at 0.30 â†’ score â‰ˆ 30%
         when(pythonClient.isAvailable()).thenReturn(true);
         when(candidateRepository.findById(CANDIDATE_ID)).thenReturn(Optional.of(makeCandidate()));
 
-        TechnicalSkill skill = makeSkill("Kubernetes", false, 0.30);
+        TechnicalSkill skill = makeSkill("Kubernetes", false);
         Job job = makeJob(List.of(skill), Collections.emptyList());
         when(jobRepository.findByIdWithSkills(JOB_ID)).thenReturn(Optional.of(job));
         when(jobRepository.findByIdWithPrerequisites(JOB_ID)).thenReturn(Optional.of(job));

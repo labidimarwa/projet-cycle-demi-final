@@ -20,7 +20,7 @@ public class FileSecurityValidator {
 
     private final SecurityEventLogger eventLogger;
 
-    private static final long   MAX_SIZE_BYTES    = 10 * 1024 * 1024; // 10 MB
+    private static final long   MAX_SIZE_BYTES    = 10L * 1024 * 1024; // 10 MB
     private static final Set<String> ALLOWED_EXT  = Set.of(
         "pdf", "doc", "docx", "png", "jpg", "jpeg", "gif", "txt", "csv", "xlsx"
     );

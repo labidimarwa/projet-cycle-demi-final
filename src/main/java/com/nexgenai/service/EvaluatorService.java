@@ -15,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Phase 2 refactoring: updated to use unified Assessment, TestSession, and
@@ -73,7 +72,7 @@ public class EvaluatorService {
 
         return evaluators.stream()
             .map(this::toSummary)
-            .collect(Collectors.toList());
+            .toList();
     }
 
 
@@ -99,7 +98,7 @@ public class EvaluatorService {
     public EvaluatorDashboardDto buildDashboard(String email) {
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found: " + email));
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + email));
 
         String evaluatorId = user.getId();
 
@@ -114,7 +113,7 @@ public class EvaluatorService {
                 .filter(s -> s.getSlotStart() != null
                           && s.getSlotStart().toLocalDate().equals(today))
                 .sorted(Comparator.comparing(InterviewSlot::getSlotStart))
-                .collect(Collectors.toList());
+                .toList();
 
         // Upcoming slots (next 7 days, not today)
         LocalDateTime weekEnd = now.plusDays(7);
@@ -124,7 +123,7 @@ public class EvaluatorService {
                           && !s.getSlotStart().toLocalDate().equals(today)
                           && s.getSlotStart().isBefore(weekEnd))
                 .sorted(Comparator.comparing(InterviewSlot::getSlotStart))
-                .collect(Collectors.toList());
+                .toList();
 
         // Recently completed (last 30 days, max 6)
         LocalDateTime thirtyDaysAgo = now.minusDays(30);
@@ -134,7 +133,7 @@ public class EvaluatorService {
                           && s.getSlotStart().isAfter(thirtyDaysAgo))
                 .sorted(Comparator.comparing(InterviewSlot::getSlotStart, Comparator.reverseOrder()))
                 .limit(6)
-                .collect(Collectors.toList());
+                .toList();
 
         // This week stats
         LocalDateTime weekStart = now.minusDays(7);
@@ -142,7 +141,7 @@ public class EvaluatorService {
                 .filter(s -> InterviewSlot.SlotStatus.COMPLETED.equals(s.getStatus())
                           && s.getSlotStart() != null
                           && s.getSlotStart().isAfter(weekStart))
-                .collect(Collectors.toList());
+                .toList();
 
         // Next interview today
         String nextInterviewTime = todaySlots.stream()
@@ -181,9 +180,9 @@ public class EvaluatorService {
                 .rejectedThisWeek((int) thisWeekCompleted.stream()
                         .filter(s -> "REJECTED".equals(s.getDecision())).count())
                 // Slots
-                .todaySlots(todaySlots.stream().map(s -> toSlotDto(s, evaluatorId)).collect(Collectors.toList()))
-                .upcomingSlots(upcomingSlots.stream().map(s -> toSlotDto(s, evaluatorId)).collect(Collectors.toList()))
-                .recentCompleted(recentCompleted.stream().map(s -> toSlotDto(s, evaluatorId)).collect(Collectors.toList()))
+                .todaySlots(todaySlots.stream().map(s -> toSlotDto(s, evaluatorId)).toList())
+                .upcomingSlots(upcomingSlots.stream().map(s -> toSlotDto(s, evaluatorId)).toList())
+                .recentCompleted(recentCompleted.stream().map(s -> toSlotDto(s, evaluatorId)).toList())
                 // Tests
                 .assignedTests(assignedTests)
                 // Pipeline
@@ -311,7 +310,8 @@ public class EvaluatorService {
         Interview interview = null;
         try {
             interview = interviewRepository.findByInterviewId(s.getInterviewId()).orElse(null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { // intentionally empty
+        }
 
         String jobTitle  = interview != null ? interview.getJobTitle()  : "";
         String stageName = interview != null ? interview.getStageName()  : "";
