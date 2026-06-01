@@ -26,28 +26,29 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
 
     private final SecurityEventLogger eventLogger;
 
-    // ── XSS patterns ─────────────────────────────────────────────────────────
-    private static final Pattern XSS = Pattern.compile(
-        "<\\s*script[^>]*>|</\\s*script\\s*>|" +
-        "javascript\\s*:|vbscript\\s*:|" +
-        "on(load|error|click|mouseover|focus|blur|submit|change)\\s*=|" +
-        "<\\s*(iframe|object|embed|applet|form)[^>]*>|" +
-        "expression\\s*\\(|" +
-        "data\\s*:\\s*text/html|" +
-        "%3cscript|&#x3c;",
+    // ── XSS patterns (split to keep complexity ≤ 20 each) ──────────────────
+    private static final Pattern XSS_SCRIPT = Pattern.compile(
+        "<\\s*script[^>]*>|</\\s*script\\s*>|javascript\\s*:|vbscript\\s*:|%3cscript|&#x3c;",
+        Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+    );
+    private static final Pattern XSS_EVENT = Pattern.compile(
+        "on(load|error|click|mouseover|focus|blur|submit|change)\\s*=",
+        Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern XSS_EMBED = Pattern.compile(
+        "<\\s*(iframe|object|embed|applet|form)[^>]*>|expression\\s*\\(|data\\s*:\\s*text/html",
         Pattern.CASE_INSENSITIVE | Pattern.DOTALL
     );
 
-    // ── SQL injection patterns ────────────────────────────────────────────────
-    private static final Pattern SQLI = Pattern.compile(
-        "'\\s*(or|and)\\s+['\"]?\\w|" +
-        "--(?:\\s|$|;|')|" +     // SQL comment: --, -- , --; or --' (no trailing-space requirement)
-        ";\\s*(drop|delete|truncate|update|insert|alter|create|exec)\\s|" +
-        "\\bunion\\b.{0,30}\\bselect\\b|" +
-        "\\bexec(ute)?\\s*\\(|" +
-        "\\bxp_\\w+|" +
-        "/\\*.*\\*/|" +
-        "\\bsleep\\s*\\(|\\bwaitfor\\b|\\bbenchmark\\s*\\(",
+    // ── SQL injection patterns (split to keep complexity ≤ 20 each) ─────────
+    private static final Pattern SQLI_KEYWORDS = Pattern.compile(
+        "'\\s*(or|and)\\s+['\"]?\\w|--(?:\\s|$|;|')|" +
+        ";\\s*(drop|delete|truncate|update|insert|alter|create|exec)\\s",
+        Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern SQLI_FUNCTIONS = Pattern.compile(
+        "\\bunion\\b.{0,30}\\bselect\\b|\\bexec(ute)?\\s*\\(|\\bxp_\\w+|" +
+        "/\\*.*\\*/|\\bsleep\\s*\\(|\\bwaitfor\\b|\\bbenchmark\\s*\\(",
         Pattern.CASE_INSENSITIVE | Pattern.DOTALL
     );
 
@@ -144,11 +145,22 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
 
     private AttackType classify(String value) {
         if (value == null || value.isBlank()) return AttackType.NONE;
-        if (XSS.matcher(value).find())             return AttackType.XSS;
-        if (SQLI.matcher(value).find())            return AttackType.SQLI;
+        if (isXss(value))                          return AttackType.XSS;
+        if (isSqli(value))                         return AttackType.SQLI;
         if (PATH_TRAVERSAL.matcher(value).find())  return AttackType.PATH;
         if (CMD_INJECT.matcher(value).find())      return AttackType.CMD;
         return AttackType.NONE;
+    }
+
+    private boolean isXss(String value) {
+        return XSS_SCRIPT.matcher(value).find()
+            || XSS_EVENT.matcher(value).find()
+            || XSS_EMBED.matcher(value).find();
+    }
+
+    private boolean isSqli(String value) {
+        return SQLI_KEYWORDS.matcher(value).find()
+            || SQLI_FUNCTIONS.matcher(value).find();
     }
 
     private void log(AttackType type, String ip, String method, String url,

@@ -264,23 +264,28 @@ public class JobService {
 
         if (req.getPrerequisites() == null || req.getPrerequisites().isEmpty())
             throw new IllegalArgumentException("Au moins un prérequis est obligatoire");
-        req.getPrerequisites().forEach(p -> {
-            if (p.getValue() == null || p.getValue().isBlank())
-                throw new IllegalArgumentException("Chaque prérequis doit avoir une valeur non nulle");
-        });
+        req.getPrerequisites().forEach(this::validatePrerequisite);
 
         if (req.getTechnicalSkills() == null || req.getTechnicalSkills().isEmpty())
             throw new IllegalArgumentException("Au moins une compétence est obligatoire");
 
         if (req.getWorkflowStages() != null) {
-            req.getWorkflowStages().forEach(stage -> {
-                if (stage.getStageType() != null
-                        && HUMAN_STAGE_TYPES.contains(stage.getStageType())
-                        && (stage.getAssigneeId() == null || stage.getAssigneeId().isBlank()))
-                    throw new IllegalArgumentException(
-                        "L'étape \"" + stage.getStageType() + "\" doit avoir un responsable assigné (assigneeId)");
-            });
+            req.getWorkflowStages().forEach(this::validateWorkflowStage);
         }
+    }
+
+    private void validatePrerequisite(CreateJobRequest.PrerequisiteRequest p) {
+        if (p.getValue() == null || p.getValue().isBlank())
+            throw new IllegalArgumentException("Chaque prérequis doit avoir une valeur non nulle");
+    }
+
+    private void validateWorkflowStage(CreateJobRequest.WorkflowStageRequest stage) {
+        boolean needsAssignee = stage.getStageType() != null
+                && HUMAN_STAGE_TYPES.contains(stage.getStageType());
+        boolean missingAssignee = stage.getAssigneeId() == null || stage.getAssigneeId().isBlank();
+        if (needsAssignee && missingAssignee)
+            throw new IllegalArgumentException(
+                "L'étape \"" + stage.getStageType() + "\" doit avoir un responsable assigné (assigneeId)");
     }
 
     private void applyRequestToJob(Job job, CreateJobRequest req) {

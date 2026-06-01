@@ -141,26 +141,10 @@ public class TestSessionService {
             throw new IllegalStateException("Already submitted");
 
         // Persist any answers sent in the final submission payload
-        if (req.getAnswers() != null) {
-            for (Map.Entry<String, Object> entry : req.getAnswers().entrySet()) {
-                persistAnswer(session, entry.getKey(), entry.getValue());
-            }
-        }
+        persistFinalAnswers(session, req.getAnswers());
 
         // Persist anti-cheat events
-        if (req.getAntiCheatLog() != null) {
-            Assessment assessment = session.getAssessment();
-            for (AntiCheatEventDto evt : req.getAntiCheatLog()) {
-                antiCheatRepository.save(AntiCheatEvent.builder()
-                        .testId(assessment.getId())
-                        .sessionId(sessionId)
-                        .type(evt.getType())
-                        .detail(evt.getDetail())
-                        .questionIndex(evt.getQuestionIndex())
-                        .occurredAt(parseTimestamp(evt.getTimestamp()))
-                        .build());
-            }
-        }
+        persistAntiCheatLog(sessionId, session.getAssessment(), req.getAntiCheatLog());
 
         // Load all saved answers for scoring
         Map<String, TestSessionAnswer> answersByQuestion = sessionAnswerRepository
@@ -273,23 +257,9 @@ public class TestSessionService {
         Assessment assessment = assessmentRepository.findByIdWithThemes(session.getAssessment().getId())
                 .orElseThrow(() -> new IllegalStateException(ASSESSMENT_NOT_FOUND + "unknown"));
 
-        int totalPoints = 0;
-        int earnedPoints = 0;
-
-        for (TestTheme theme : assessment.getThemes()) {
-            for (ThemeModel tm : theme.getThemeModels()) {
-                int weight = (tm.getWeight() != null && tm.getWeight() > 0) ? tm.getWeight() : 1;
-                for (Question question : tm.getQuestions()) {
-                    List<QuestionOption> opts = new ArrayList<>(question.getOptions());
-                    int maxPts = opts.stream().mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).max().orElse(0);
-                    totalPoints += maxPts * weight;
-                    List<String> chosen = answers.getOrDefault(question.getId(), List.of());
-                    int pts = opts.stream().filter(o -> chosen.contains(o.getId()))
-                            .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
-                    earnedPoints += Math.max(0, pts) * weight;
-                }
-            }
-        }
+        int[] totals = computeRhScore(assessment, answers);
+        int totalPoints  = totals[0];
+        int earnedPoints = totals[1];
 
         int score = totalPoints > 0 ? Math.round((float) earnedPoints / totalPoints * 100) : 0;
         session.setScore(score);
@@ -458,6 +428,48 @@ public class TestSessionService {
     }
 
     @SuppressWarnings("unchecked")
+    private int[] computeRhScore(Assessment assessment, Map<String, List<String>> answers) {
+        int totalPoints = 0;
+        int earnedPoints = 0;
+        for (TestTheme theme : assessment.getThemes()) {
+            for (ThemeModel tm : theme.getThemeModels()) {
+                int weight = (tm.getWeight() != null && tm.getWeight() > 0) ? tm.getWeight() : 1;
+                for (Question question : tm.getQuestions()) {
+                    List<QuestionOption> opts = new ArrayList<>(question.getOptions());
+                    int maxPts = opts.stream().mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).max().orElse(0);
+                    totalPoints += maxPts * weight;
+                    List<String> chosen = answers.getOrDefault(question.getId(), List.of());
+                    int pts = opts.stream().filter(o -> chosen.contains(o.getId()))
+                            .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
+                    earnedPoints += Math.max(0, pts) * weight;
+                }
+            }
+        }
+        return new int[]{totalPoints, earnedPoints};
+    }
+
+    private void persistFinalAnswers(TestSession session, Map<String, Object> answers) {
+        if (answers == null) return;
+        for (Map.Entry<String, Object> entry : answers.entrySet()) {
+            persistAnswer(session, entry.getKey(), entry.getValue());
+        }
+    }
+
+    private void persistAntiCheatLog(String sessionId, Assessment assessment,
+                                     List<AntiCheatEventDto> log) {
+        if (log == null) return;
+        for (AntiCheatEventDto evt : log) {
+            antiCheatRepository.save(AntiCheatEvent.builder()
+                    .testId(assessment.getId())
+                    .sessionId(sessionId)
+                    .type(evt.getType())
+                    .detail(evt.getDetail())
+                    .questionIndex(evt.getQuestionIndex())
+                    .occurredAt(parseTimestamp(evt.getTimestamp()))
+                    .build());
+        }
+    }
+
     private void persistAnswer(TestSession session, String questionId, Object answer) {
         if (answer == null) return;
         TestSessionAnswer entity = sessionAnswerRepository
@@ -672,7 +684,7 @@ public class TestSessionService {
                 .complexity(q.getComplexity()).timeLimit(q.getTimeLimit()).memoryLimit(q.getMemoryLimit())
                 .testCases(cases)
                 .supportedLangs(q.getSupportedLangs() != null && !q.getSupportedLangs().isEmpty()
-                        ? q.getSupportedLangs() : List.of("python", "javascript", "java", "c", "cpp", "go"))
+                        ? q.getSupportedLangs() : List.of(LANG_PYTHON, "javascript", "java", "c", "cpp", "go"))
                 .selectedLanguage(LANG_PYTHON)
                 .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : null)
                 .options(options).likertPoints(q.getLikertPoints())

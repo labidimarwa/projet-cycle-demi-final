@@ -88,10 +88,7 @@ class PasswordGeneratorServiceTest {
     @Order(7)
     @DisplayName("TC-PWD-07 : generatePassword(8) → length == 8, traité comme < 8, retourne 12")
     void generatePassword_withLength8_treatedAsLessThan8_defaultsTo12() {
-        // La condition dans le code est "if (length < 8)" → length=8 ne déclenche pas le default
-        // length=8 doit retourner 8 caractères
         String password = service.generatePassword(8);
-        // length=8 est >= 8, donc pas de default, doit retourner 8
         assertEquals(8, password.length(),
             "generatePassword(8) ne doit pas defaulter car 8 >= 8");
     }

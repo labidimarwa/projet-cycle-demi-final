@@ -110,9 +110,7 @@ public class CodeExecutionService {
             Files.writeString(codeFile, code, StandardCharsets.UTF_8);
 
             for (RunCodeRequest.TestCasePayload tc : testCases) {
-                TestCaseResultDto result = runSingleTestCase(
-                        tempDir, lang, tc, codeFile
-                );
+                TestCaseResultDto result = runSingleTestCase(tempDir, lang, tc);
                 results.add(result);
             }
 
@@ -132,7 +130,7 @@ public class CodeExecutionService {
 
     private TestCaseResultDto runSingleTestCase(
             Path tempDir, String lang,
-            RunCodeRequest.TestCasePayload tc, Path codeFile) {
+            RunCodeRequest.TestCasePayload tc) {
 
         long startMs = System.currentTimeMillis();
         long memoryKb = 0;

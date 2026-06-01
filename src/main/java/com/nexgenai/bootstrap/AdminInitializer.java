@@ -17,6 +17,8 @@ import java.time.LocalDateTime;
 @Slf4j
 public class AdminInitializer implements CommandLineRunner {
 
+    private static final String SEPARATOR = SEPARATOR;
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -24,9 +26,9 @@ public class AdminInitializer implements CommandLineRunner {
     public void run(String... args) throws Exception {
         // Vérifier si un admin existe déjà
         if (userRepository.findByEmail("admin@nexgenai.com").isEmpty()) {
-            log.info("==========================================");
+            log.info(SEPARATOR);
             log.info("  CRÉATION DE L'ADMINISTRATEUR PAR DÉFAUT");
-            log.info("==========================================");
+            log.info(SEPARATOR);
             
             // Créer l'admin par défaut
             Admin admin = Admin.builder()
@@ -43,7 +45,7 @@ public class AdminInitializer implements CommandLineRunner {
 
             log.info("Admin créé avec succès !");
             log.info("Email: admin@nexgenai.com");
-            log.info("==========================================");
+            log.info(SEPARATOR);
         }
       
     }

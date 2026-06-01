@@ -292,10 +292,6 @@ class JobControllerTest {
         assertTrue(result.getResponse().getContentAsString().contains("Updated Title"));
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // DELETE /jobs/{id}
-    // ══════════════════════════════════════════════════════════════════════════
-
     @Test
     @Order(13)
     @DisplayName("TC-JCTRL-13 : DELETE /jobs/{id} sans auth → 401 ou 403")

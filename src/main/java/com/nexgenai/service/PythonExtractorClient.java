@@ -74,47 +74,7 @@ public class PythonExtractorClient {
                                          List<Prerequisite> jobPrereqs,
                                          List<Map<String, Object>> jobSkills,
                                          String jobId) {
-        MultipartBodyBuilder form = new MultipartBodyBuilder();
-        form.part("fichier", new ByteArrayResource(cvBytes) {
-            @Override
-            public String getFilename() { return filename; }
-        }).contentType(
-            filename.toLowerCase().endsWith(".pdf")
-                ? MediaType.APPLICATION_PDF
-                : MediaType.APPLICATION_OCTET_STREAM
-        );
-
-        if (jobPrereqs != null && !jobPrereqs.isEmpty()) {
-            try {
-                List<Map<String, Object>> prereqsJson = jobPrereqs.stream()
-                    .map(p -> {
-                        Map<String, Object> m = new java.util.HashMap<>();
-                        m.put("type",        p.getType());
-                        m.put("value",       p.getValue());
-                        m.put("obligatory",  Boolean.TRUE.equals(p.getObligatory()));
-                        if (p.getInstruction() != null) m.put("instruction", p.getInstruction());
-                        if (p.getJsonSchema()  != null) m.put("json_schema",  p.getJsonSchema());
-                        return m;
-                    })
-                    .toList();
-                form.part("job_prerequisites", objectMapper.writeValueAsString(prereqsJson));
-            } catch (Exception e) {
-                log.warn("⚠️ Impossible de sérialiser les prérequis job : {}", e.getMessage());
-            }
-        }
-
-        if (jobSkills != null && !jobSkills.isEmpty()) {
-            try {
-                form.part("job_skills", objectMapper.writeValueAsString(jobSkills));
-            } catch (Exception e) {
-                log.warn("⚠️ Impossible de sérialiser les skills job : {}", e.getMessage());
-            }
-        }
-
-        if (jobId != null && !jobId.isBlank()) {
-            form.part("job_id", jobId);
-        }
-
+        MultipartBodyBuilder form = buildExtractionForm(cvBytes, filename, jobPrereqs, jobSkills, jobId);
         try {
             CvExtractionResult result = webClient.post()
                 .uri("/extract")
@@ -136,8 +96,7 @@ public class PythonExtractorClient {
             log.error("❌ Microservice Python inaccessible ({})", e.getMessage());
             throw new IllegalStateException("Le service d'extraction IA est indisponible...", e);
         } catch (Exception e) {
-            if (e.getCause() instanceof java.util.concurrent.TimeoutException
-                || e.getMessage() != null && e.getMessage().contains("timeout")) {
+            if (isTimeoutException(e)) {
                 log.error("❌ Timeout extraction CV après {}ms", timeoutMs);
                 throw new IllegalStateException(
                     "Timeout : Qwen n'a pas répondu dans " + (timeoutMs/1000) + "s. " +
@@ -146,6 +105,61 @@ public class PythonExtractorClient {
             log.error("❌ Erreur inattendue extraction : {}", e.getMessage());
             throw new IllegalStateException("Erreur inattendue : " + e.getMessage(), e);
         }
+    }
+
+    private MultipartBodyBuilder buildExtractionForm(byte[] cvBytes, String filename,
+                                                      List<Prerequisite> jobPrereqs,
+                                                      List<Map<String, Object>> jobSkills,
+                                                      String jobId) {
+        MultipartBodyBuilder form = new MultipartBodyBuilder();
+        MediaType contentType = filename.toLowerCase().endsWith(".pdf")
+            ? MediaType.APPLICATION_PDF : MediaType.APPLICATION_OCTET_STREAM;
+        form.part("fichier", new ByteArrayResource(cvBytes) {
+            @Override public String getFilename() { return filename; }
+        }).contentType(contentType);
+
+        addPrerequisitesPart(form, jobPrereqs);
+        addSkillsPart(form, jobSkills);
+        if (jobId != null && !jobId.isBlank()) {
+            form.part("job_id", jobId);
+        }
+        return form;
+    }
+
+    private void addPrerequisitesPart(MultipartBodyBuilder form, List<Prerequisite> jobPrereqs) {
+        if (jobPrereqs == null || jobPrereqs.isEmpty()) return;
+        try {
+            List<Map<String, Object>> prereqsJson = jobPrereqs.stream()
+                .map(this::buildPrereqMap)
+                .toList();
+            form.part("job_prerequisites", objectMapper.writeValueAsString(prereqsJson));
+        } catch (Exception e) {
+            log.warn("⚠️ Impossible de sérialiser les prérequis job : {}", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> buildPrereqMap(Prerequisite p) {
+        Map<String, Object> m = new java.util.HashMap<>();
+        m.put("type",       p.getType());
+        m.put("value",      p.getValue());
+        m.put("obligatory", Boolean.TRUE.equals(p.getObligatory()));
+        if (p.getInstruction() != null) m.put("instruction", p.getInstruction());
+        if (p.getJsonSchema()  != null) m.put("json_schema",  p.getJsonSchema());
+        return m;
+    }
+
+    private void addSkillsPart(MultipartBodyBuilder form, List<Map<String, Object>> jobSkills) {
+        if (jobSkills == null || jobSkills.isEmpty()) return;
+        try {
+            form.part("job_skills", objectMapper.writeValueAsString(jobSkills));
+        } catch (Exception e) {
+            log.warn("⚠️ Impossible de sérialiser les skills job : {}", e.getMessage());
+        }
+    }
+
+    private boolean isTimeoutException(Exception e) {
+        return e.getCause() instanceof java.util.concurrent.TimeoutException
+            || (e.getMessage() != null && e.getMessage().contains("timeout"));
     }
 
     /**
