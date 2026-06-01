@@ -131,9 +131,8 @@ class JwtServiceTest {
     @Test
     @Order(6)
     @DisplayName("TC-JWT-06 : deux générations pour le même user → tokens différents (iat varie)")
-    void generateToken_twoCalls_produceDifferentTokens() throws InterruptedException {
+    void generateToken_twoCalls_produceDifferentTokens() {
         String token1 = jwtService.generateToken(candidateUser);
-        Thread.sleep(2); // force une légère diff de iat
         String token2 = jwtService.generateToken(candidateUser);
 
         // Les tokens peuvent être identiques si générés dans la même milliseconde

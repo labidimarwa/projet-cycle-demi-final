@@ -364,10 +364,16 @@ public class HrService {
             .jobId(jobId)
             .decision(decision)
             .nextStageName(nextStageName)
-            .message(decision.equals(STATUS_ACCEPTED)
-                ? "Candidate accepted. Moved to: " + (nextStageName != null ? nextStageName : "final stage")
-                : "Candidate rejected. Notification email sent.")
+            .message(buildDecisionMessage(decision, nextStageName))
             .build();
+    }
+
+    private String buildDecisionMessage(String decision, String nextStageName) {
+        if (decision.equals(STATUS_ACCEPTED)) {
+            String stage = nextStageName != null ? nextStageName : "final stage";
+            return "Candidate accepted. Moved to: " + stage;
+        }
+        return "Candidate rejected. Notification email sent.";
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -472,10 +478,6 @@ public class HrService {
     private List<ApplicantDetailResponse.DimensionScore> buildDimensions(JobMatch m) {
         // Placeholder — adapt to actual JobMatch dimension fields
         return List.of();
-    }
-
-    private ApplicantDetailResponse.DimensionScore dim(String name, Integer score) {
-        return ApplicantDetailResponse.DimensionScore.builder().name(name).score(score).build();
     }
 
     private StageProgressDTO mapStageProgress(ApplicationStageProgress p) {
@@ -593,7 +595,14 @@ public class HrService {
     }
 
     private String buildScoreBadge(int score) {
-        String color = score >= 80 ? "#10b981" : score >= 60 ? "#f59e0b" : "#ef4444";
+        String color;
+        if (score >= 80) {
+            color = "#10b981";
+        } else if (score >= 60) {
+            color = "#f59e0b";
+        } else {
+            color = "#ef4444";
+        }
         return """
             <div style="display:inline-block;background:%s18;border:1px solid %s40;
                         border-radius:50px;padding:8px 20px;margin:0 0 0;">

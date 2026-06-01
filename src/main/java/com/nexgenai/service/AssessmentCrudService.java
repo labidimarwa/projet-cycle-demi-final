@@ -665,7 +665,7 @@ public class AssessmentCrudService {
         return tcs.stream().map(tc -> new Question.TestCase(
             tc.getInput(), tc.getOutput(),
             tc.getPoints() != null ? tc.getPoints() : 10,
-            tc.getVisible() != null ? tc.getVisible() : true))
+            !Boolean.FALSE.equals(tc.getVisible())))
             .toList();
     }
 

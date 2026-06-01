@@ -98,7 +98,7 @@ public class TestSessionService {
         }
 
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
-            throw new RuntimeException("Test already submitted");
+            throw new IllegalStateException("Test already submitted");
 
         Map<String, TestSessionAnswer> savedByQuestion = sessionAnswerRepository
                 .findBySessionId(session.getId()).stream()
@@ -119,7 +119,7 @@ public class TestSessionService {
                 .timeLimitSeconds(timeLimitSeconds).questions(questions).build();
     }
 
-    public List<TestCaseResultDto> runCode(RunCodeRequest req, String email) {
+    public List<TestCaseResultDto> runCode(RunCodeRequest req) {
         return codeExecutionService.execute(req.getCode(), req.getLanguage(), req.getTestCases());
     }
 
@@ -138,7 +138,7 @@ public class TestSessionService {
         TestSession session = testSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
-            throw new RuntimeException("Already submitted");
+            throw new IllegalStateException("Already submitted");
 
         // Persist any answers sent in the final submission payload
         if (req.getAnswers() != null) {
@@ -169,7 +169,8 @@ public class TestSessionService {
 
         Assessment assessment = session.getAssessment();
         List<QuestionResultDto> questionResults = new ArrayList<>();
-        int totalPoints = 0, earnedPoints = 0;
+        int totalPoints = 0;
+        int earnedPoints = 0;
 
         for (TestTheme theme : assessment.getThemes()) {
             List<Question> questions = questionRepository.findByThemeIdOrderByOrderIndex(theme.getId());
@@ -272,7 +273,8 @@ public class TestSessionService {
         Assessment assessment = assessmentRepository.findByIdWithThemes(session.getAssessment().getId())
                 .orElseThrow(() -> new IllegalStateException(ASSESSMENT_NOT_FOUND + "unknown"));
 
-        int totalPoints = 0, earnedPoints = 0;
+        int totalPoints = 0;
+        int earnedPoints = 0;
 
         for (TestTheme theme : assessment.getThemes()) {
             for (ThemeModel tm : theme.getThemeModels()) {
@@ -313,7 +315,7 @@ public class TestSessionService {
         TestSession session = testSessionRepository.findById(req.getSessionId())
                 .orElseThrow(() -> new IllegalStateException(SESSION_NOT_FOUND + ": " + req.getSessionId()));
         if (session.getStatus() == TestSession.SessionStatus.COMPLETED)
-            throw new RuntimeException("Test already submitted");
+            throw new IllegalStateException("Test already submitted");
 
         TestSessionAnswer answer = sessionAnswerRepository
                 .findBySessionIdAndQuestionId(session.getId(), req.getQuestionId())
@@ -482,7 +484,7 @@ public class TestSessionService {
         try {
             if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING)
                 return scoreProblemSolving(q, saved, maxPts);
-            return scoreQcm(q, saved, maxPts);
+            return scoreQcm(q, saved);
         } catch (Exception e) {
             log.warn("Error scoring question {}: {}", q.getId(), e.getMessage());
             return 0;
@@ -524,7 +526,7 @@ public class TestSessionService {
         return Math.min(earned, maxPts);
     }
 
-    private int scoreQcm(Question q, TestSessionAnswer saved, int maxPts) {
+    private int scoreQcm(Question q, TestSessionAnswer saved) {
         String qType = q.getQuestionType() != null ? q.getQuestionType().name() : null;
         if (qType == null) return 0;
         List<Question.QcmOption> opts = q.getQcmOptions() != null ? q.getQcmOptions() : List.of();
@@ -671,7 +673,7 @@ public class TestSessionService {
                 .testCases(cases)
                 .supportedLangs(q.getSupportedLangs() != null && !q.getSupportedLangs().isEmpty()
                         ? q.getSupportedLangs() : List.of("python", "javascript", "java", "c", "cpp", "go"))
-                .selectedLanguage("python")
+                .selectedLanguage(LANG_PYTHON)
                 .questionType(q.getQuestionType() != null ? q.getQuestionType().name() : null)
                 .options(options).likertPoints(q.getLikertPoints())
                 .imageUrl(q.getImagePath() != null

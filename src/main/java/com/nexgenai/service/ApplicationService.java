@@ -59,7 +59,7 @@ public class ApplicationService {
             userRepository.save(candidate);
         }
 
-        Application savedApp = applicationRepository.save(builder.build());
+        applicationRepository.save(builder.build());
         log.info("✅ Application saved: {} → job {}", candidateEmail, jobId);
 
         // ── Seed HR process-mapping stages for this application ───────────────
@@ -110,7 +110,9 @@ public class ApplicationService {
                 if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
                 return req.getRemoteAddr();
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("Could not resolve client IP: {}", e.getMessage());
+        }
         return "unknown";
     }
 

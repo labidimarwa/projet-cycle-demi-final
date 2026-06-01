@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -60,7 +59,14 @@ public class AntiCheatService {
 
         // Risk scoring
         long riskScore = tabSwitch * 3 + paste * 2 + devTools * 4 + blur;
-        String riskLevel = riskScore >= 10 ? "HIGH" : riskScore >= 4 ? "MEDIUM" : "LOW";
+        String riskLevel;
+        if (riskScore >= 10) {
+            riskLevel = "HIGH";
+        } else if (riskScore >= 4) {
+            riskLevel = "MEDIUM";
+        } else {
+            riskLevel = "LOW";
+        }
 
         List<AntiCheatEventDto> eventDtos = events.stream()
                 .map(e -> {
@@ -71,7 +77,7 @@ public class AntiCheatService {
                     d.setTimestamp(e.getOccurredAt().toString());
                     return d;
                 })
-                .collect(Collectors.toList());
+                .toList();
 
         return AntiCheatReportDto.builder()
                 .sessionId(sessionId)

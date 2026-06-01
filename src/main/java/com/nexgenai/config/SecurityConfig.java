@@ -118,7 +118,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.PATCH, "/api/v1/hr/candidates/*/jobs/*/stages/*").hasAnyRole(ROLE_HR, ROLE_ADMIN)
 
                 // HR matching (MatchingController) — RH et Admin uniquement
-                .requestMatchers("/hr/**").hasAnyRole("HR", "ADMIN")
+                .requestMatchers("/hr/**").hasAnyRole(ROLE_HR, ROLE_ADMIN)
 
                 // Everything else requires authentication
                 .anyRequest().authenticated()

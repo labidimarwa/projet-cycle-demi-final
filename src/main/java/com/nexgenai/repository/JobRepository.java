@@ -37,12 +37,7 @@ public interface JobRepository extends JpaRepository<Job, String> {
     // Trouver les jobs récents (30 derniers jours)
     @Query("SELECT j FROM Job j WHERE j.createdAt >= CURRENT_DATE - 30 ORDER BY j.createdAt DESC")
     List<Job> findRecentJobs();
-    
-    // Trouver les jobs avec le plus de candidatures
-   // @Query("SELECT j, COUNT(a) as applicationCount FROM Job j LEFT JOIN Application a ON j.id = a.job.id GROUP BY j ORDER BY applicationCount DESC")
-   // List<Object[]> findMostAppliedJobs();
-    
-    // Vérifier si un job existe par son ID
+
     boolean existsById(String id);
     
     

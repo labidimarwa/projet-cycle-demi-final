@@ -29,7 +29,7 @@ public class TechnicalTestController {
     public ResponseEntity<List<TestCaseResultDto>> runCode(
             @RequestBody RunCodeRequest req,
             @AuthenticationPrincipal UserDetails user) {
-        return ResponseEntity.ok(svc.runCode(req, user.getUsername()));
+        return ResponseEntity.ok(svc.runCode(req));
     }
 
     @PostMapping("/sessions/{sessionId}/answer")

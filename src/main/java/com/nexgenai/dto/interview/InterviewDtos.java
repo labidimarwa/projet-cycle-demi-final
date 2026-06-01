@@ -10,6 +10,8 @@ import java.util.List;
 
 public class InterviewDtos {
 
+    private InterviewDtos() {}
+
     // ── Summary returned to frontend ──────────────────────────────────────────
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class InterviewSummaryResponse {

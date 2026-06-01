@@ -374,7 +374,7 @@ class JobControllerTest {
                .andReturn();
 
         String link = linkResult.getResponse().getContentAsString();
-        assertTrue(link.contains("apply") || link.contains("http") || link.length() > 0,
+        assertTrue(link.contains("apply") || link.contains("http") || !link.isEmpty(),
             "La réponse doit contenir un lien d'application : " + link);
     }
 }

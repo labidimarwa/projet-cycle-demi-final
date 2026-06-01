@@ -165,7 +165,9 @@ public class CandidateService {
         String status = "PENDING";
         try {
             if (app.getStatus() != null) status = app.getStatus().name();
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("Could not read application status: {}", e.getMessage());
+        }
 
         return CandidateApplicationResponse.builder()
                 .jobId(jobId)

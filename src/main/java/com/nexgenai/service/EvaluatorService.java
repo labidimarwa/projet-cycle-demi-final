@@ -180,9 +180,9 @@ public class EvaluatorService {
                 .rejectedThisWeek((int) thisWeekCompleted.stream()
                         .filter(s -> "REJECTED".equals(s.getDecision())).count())
                 // Slots
-                .todaySlots(todaySlots.stream().map(s -> toSlotDto(s, evaluatorId)).toList())
-                .upcomingSlots(upcomingSlots.stream().map(s -> toSlotDto(s, evaluatorId)).toList())
-                .recentCompleted(recentCompleted.stream().map(s -> toSlotDto(s, evaluatorId)).toList())
+                .todaySlots(todaySlots.stream().map(s -> toSlotDto(s)).toList())
+                .upcomingSlots(upcomingSlots.stream().map(s -> toSlotDto(s)).toList())
+                .recentCompleted(recentCompleted.stream().map(s -> toSlotDto(s)).toList())
                 // Tests
                 .assignedTests(assignedTests)
                 // Pipeline
@@ -214,14 +214,15 @@ public class EvaluatorService {
         List<AssignedTestDto> result = new ArrayList<>();
 
         for (Job job : jobs) {
-            if (job.getWorkflowStages() == null) continue;
+            if (job.getWorkflowStages() == null) {
+                continue;
+            }
 
             for (WorkflowStage stage : job.getWorkflowStages()) {
-                if (stage.getStageType() != StageType.TECHNICAL_TEST) continue;
-
-                // Only stages assigned to this evaluator
-                String stageAssignee = resolveAssigneeId(stage, job);
-                if (!evaluatorId.equals(stageAssignee)) continue;
+                if (stage.getStageType() == StageType.TECHNICAL_TEST) {
+                    // Only stages assigned to this evaluator
+                    String stageAssignee = resolveAssigneeId(stage, job);
+                    if (evaluatorId.equals(stageAssignee)) {
 
                 // Find the Assessment linked to this stage (was JobTest)
                 Optional<Assessment> assessmentOpt = assessmentRepository.findByWorkflowStageId(stage.getId());
@@ -269,7 +270,9 @@ public class EvaluatorService {
                             .stageType(StageType.TECHNICAL_TEST.name())
                             .createdAt(job.getCreatedAt() != null ? job.getCreatedAt().toString() : null)
                             .build());
-                }
+                    }
+                    } // if evaluatorId.equals
+                } // if TECHNICAL_TEST
             }
         }
         return result;
@@ -306,11 +309,12 @@ public class EvaluatorService {
 
     // ── Mapper: InterviewSlot → SlotDto ──────────────────────────────────────
 
-    private SlotDto toSlotDto(InterviewSlot s, String evaluatorId) {
+    private SlotDto toSlotDto(InterviewSlot s) {
         Interview interview = null;
         try {
             interview = interviewRepository.findByInterviewId(s.getInterviewId()).orElse(null);
-        } catch (Exception ignored) { // intentionally empty
+        } catch (Exception e) {
+            log.debug("Could not load interview for slot {}: {}", s.getId(), e.getMessage());
         }
 
         String jobTitle  = interview != null ? interview.getJobTitle()  : "";

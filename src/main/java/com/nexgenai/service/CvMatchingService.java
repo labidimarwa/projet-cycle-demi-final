@@ -536,7 +536,7 @@ public class CvMatchingService {
                 .build();
         } catch (Exception e) {
             log.error("Erreur désérialisation rapport {} : {}", r.getId(), e.getMessage());
-            throw new RuntimeException("Erreur chargement rapport : " + e.getMessage());
+            throw new IllegalStateException("Erreur chargement rapport : " + e.getMessage());
         }
     }
 }

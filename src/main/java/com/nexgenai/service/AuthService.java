@@ -10,6 +10,7 @@ import com.nexgenai.model.TechEvaluator;
 import com.nexgenai.model.User;
 import com.nexgenai.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -22,6 +23,7 @@ import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AuthService {
 
     private final AuthenticationManager authenticationManager;
@@ -39,7 +41,7 @@ public class AuthService {
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
         User user = userRepository.findByEmail(request.getEmail())
-            .orElseThrow(() -> new RuntimeException("User not found"));
+            .orElseThrow(() -> new IllegalStateException("User not found"));
 
         userRepository.updateLastLogin(user.getEmail(), LocalDateTime.now());
 
@@ -78,7 +80,7 @@ public class AuthService {
 
         // 1. Vérifier unicité de l'email
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Un compte existe déjà avec cet email : " + request.getEmail());
+            throw new IllegalStateException("Un compte existe déjà avec cet email : " + request.getEmail());
         }
 
         // 2. Créer le Candidate (sous-classe de User)
@@ -93,7 +95,7 @@ public class AuthService {
 
         // 3. Sauvegarder
         Candidate saved = (Candidate) userRepository.save(candidate);
-        System.out.println("✅ Candidat créé : " + saved.getId() + " — " + saved.getEmail());
+        log.info("Candidat créé : {} — {}", saved.getId(), saved.getEmail());
 
         // 4. Générer les tokens JWT
         String token        = jwtService.generateToken(saved);

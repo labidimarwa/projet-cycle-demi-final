@@ -263,18 +263,26 @@ public class PythonExtractorClient {
         try {
             Map<String, Object> body = new java.util.LinkedHashMap<>();
             body.put("job_id", jobId);
-            List<Map<String, Object>> skillsJson = skills == null ? List.of()
-                : skills.stream()
+            List<Map<String, Object>> skillsJson;
+            if (skills == null) {
+                skillsJson = List.of();
+            } else {
+                skillsJson = skills.stream()
                     .filter(s -> s.getName() != null)
                     .map(s -> {
                         Map<String, Object> m = new java.util.LinkedHashMap<>();
                         m.put("nom",  s.getName());
-                        m.put("type", s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+                        String skillType = s.getSkillType() != null ? s.getSkillType() : "TECHNICAL";
+                        m.put("type", skillType);
                         return m;
                     })
                     .toList();
-            List<Map<String, Object>> prereqsJson = prerequisites == null ? List.of()
-                : prerequisites.stream()
+            }
+            List<Map<String, Object>> prereqsJson;
+            if (prerequisites == null) {
+                prereqsJson = List.of();
+            } else {
+                prereqsJson = prerequisites.stream()
                     .filter(p -> p.getValue() != null)
                     .map(p -> {
                         Map<String, Object> m = new java.util.LinkedHashMap<>();
@@ -283,6 +291,7 @@ public class PythonExtractorClient {
                         return m;
                     })
                     .toList();
+            }
             body.put("skills", skillsJson);
             body.put("prerequisites", prereqsJson);
 

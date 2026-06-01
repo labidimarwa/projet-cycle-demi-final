@@ -34,7 +34,7 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
         "<\\s*(iframe|object|embed|applet|form)[^>]*>|" +
         "expression\\s*\\(|" +
         "data\\s*:\\s*text/html|" +
-        "%3[Cc]script|&#x3[Cc];",
+        "%3cscript|&#x3c;",
         Pattern.CASE_INSENSITIVE | Pattern.DOTALL
     );
 
@@ -54,9 +54,9 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
     // ── Path traversal ────────────────────────────────────────────────────────
     private static final Pattern PATH_TRAVERSAL = Pattern.compile(
         "\\.{2}[/\\\\]|" +       // ../  or ..\
-        "\\.{2}%2[Ff]|" +        // ..%2F  or ..%2f
-        "%2[Ee]%2[Ee]|" +        // %2E%2E  (URL-encoded ..)
-        "%252[Ee]",               // %252E  (double-encoded .)
+        "\\.{2}%2f|" +           // ..%2F  (with CASE_INSENSITIVE)
+        "%2e%2e|" +              // %2E%2E  (URL-encoded ..)
+        "%252e",                 // %252E  (double-encoded .)
         Pattern.CASE_INSENSITIVE
     );
 

@@ -47,39 +47,39 @@ public class InterviewService {
         if (job.getWorkflowStages() == null) return;
 
         for (WorkflowStage stage : job.getWorkflowStages()) {
-            StageType type = stage.getStageType();
-            if (type == null) continue;
-
-            boolean isInterview = type == StageType.RH_INTERVIEW
-                    || type == StageType.TECHNICAL_INTERVIEW
-                    || type == StageType.ADMIN_INTERVIEW;
-            if (!isInterview) continue;
-
-            if (interviewRepository.findByWorkflowStageId(stage.getId()).isPresent()) continue;
-
-            log.info("Creating interview for stage: name={}, assigneeId={}", stage.getName(), stage.getAssigneeId());
-
-            Interview interview = Interview.builder()
-                    .jobId(job.getId())
-                    .jobTitle(job.getTitle())
-                    .jobDepartment(job.getDepartment())
-                    .workflowStageId(stage.getId())
-                    .stageName(stage.getName())
-                    .stageType(type)
-                    .assigneeId(stage.getAssigneeId())
-                    .assigneeName(stage.getAssignedTo())
-                    .durationMinutes(60)
-                    .interviewsPerDay(4)
-                    .dayStartTime(TIME_START)
-                    .dayEndTime(TIME_END)
-                    .gridConfigured(false)
-                    .scheduleConfigured(false)
-                    .slotsGenerated(false)
-                    .phaseStatus(STATUS_NOT_CONFIGURED)
-                    .build();
-
-            interviewRepository.save(interview);
+            createInterviewForStageIfNeeded(job, stage);
         }
+    }
+
+    private void createInterviewForStageIfNeeded(Job job, WorkflowStage stage) {
+        StageType type = stage.getStageType();
+        if (type == null) return;
+        boolean isInterview = type == StageType.RH_INTERVIEW
+                || type == StageType.TECHNICAL_INTERVIEW
+                || type == StageType.ADMIN_INTERVIEW;
+        if (!isInterview) return;
+        if (interviewRepository.findByWorkflowStageId(stage.getId()).isPresent()) return;
+
+        log.info("Creating interview for stage: name={}, assigneeId={}", stage.getName(), stage.getAssigneeId());
+        Interview interview = Interview.builder()
+                .jobId(job.getId())
+                .jobTitle(job.getTitle())
+                .jobDepartment(job.getDepartment())
+                .workflowStageId(stage.getId())
+                .stageName(stage.getName())
+                .stageType(type)
+                .assigneeId(stage.getAssigneeId())
+                .assigneeName(stage.getAssignedTo())
+                .durationMinutes(60)
+                .interviewsPerDay(4)
+                .dayStartTime(TIME_START)
+                .dayEndTime(TIME_END)
+                .gridConfigured(false)
+                .scheduleConfigured(false)
+                .slotsGenerated(false)
+                .phaseStatus(STATUS_NOT_CONFIGURED)
+                .build();
+        interviewRepository.save(interview);
     }
 
     @Transactional
@@ -279,8 +279,8 @@ public class InterviewService {
         List<String> excludedRanges = parseJsonList(interview.getExcludedHoursJson());
         int duration  = interview.getDurationMinutes() != null ? interview.getDurationMinutes() : 60;
         int perDay    = interview.getInterviewsPerDay() != null ? interview.getInterviewsPerDay() : 4;
-        String dayStart = interview.getDayStartTime() != null ? interview.getDayStartTime() : "09:00";
-        String dayEnd   = interview.getDayEndTime()   != null ? interview.getDayEndTime()   : "18:00";
+        String dayStart = interview.getDayStartTime() != null ? interview.getDayStartTime() : TIME_START;
+        String dayEnd   = interview.getDayEndTime()   != null ? interview.getDayEndTime()   : TIME_END;
 
         // Dates that are blocked by a previous phase
         Set<LocalDate> blockedDates = getBlockedDatesForPhase(interview);
@@ -299,14 +299,16 @@ public class InterviewService {
         int candidateIdx = 0;
 
         for (LocalDateTime roundStart : rounds) {
-            if (candidateIdx >= candidateIds.size()) break;
+            if (candidateIdx >= candidateIds.size()) {
+                break;
+            }
             LocalDateTime roundEnd = roundStart.plusMinutes(duration);
-            for (int i = 0; i < parallelism; i++) {
-                if (candidateIdx >= candidateIds.size()) break;
-
+            for (int i = 0; i < parallelism && candidateIdx < candidateIds.size(); i++) {
                 String candidateId = candidateIds.get(candidateIdx++);
                 User candidate = userRepository.findById(candidateId).orElse(null);
-                if (candidate == null) continue;
+                if (candidate == null) {
+                    continue;
+                }
 
                 String assigneeId   = assigneeIds.get(i % parallelism);
                 String assigneeName = assigneeNames.getOrDefault(assigneeId, "");
@@ -366,8 +368,8 @@ public class InterviewService {
 
         int duration    = interview.getDurationMinutes() != null ? interview.getDurationMinutes() : 60;
         int maxPerDay   = interview.getInterviewsPerDay() != null ? interview.getInterviewsPerDay() : 4;
-        String dayStart = interview.getDayStartTime() != null ? interview.getDayStartTime() : "09:00";
-        String dayEnd   = interview.getDayEndTime()   != null ? interview.getDayEndTime()   : "18:00";
+        String dayStart = interview.getDayStartTime() != null ? interview.getDayStartTime() : TIME_START;
+        String dayEnd   = interview.getDayEndTime()   != null ? interview.getDayEndTime()   : TIME_END;
         List<String> excludedRanges = parseJsonList(interview.getExcludedHoursJson());
 
         // Calculate working minutes per day minus excluded
@@ -573,8 +575,12 @@ public class InterviewService {
         List<StageType> testTypes = List.of(StageType.RH_TEST, StageType.TECHNICAL_TEST);
 
         for (WorkflowStage stage : allStages) {
-            if (stage.getStageOrder() >= thisStage.getStageOrder()) break;
-            if (!testTypes.contains(stage.getStageType())) continue;
+            if (stage.getStageOrder() >= thisStage.getStageOrder()) {
+                break;
+            }
+            if (!testTypes.contains(stage.getStageType())) {
+                continue;
+            }
 
             long activeCount = stageProgressRepository
                     .findByJobIdAndStageType(interview.getJobId(), stage.getStageType().name())
@@ -736,9 +742,13 @@ public class InterviewService {
     private List<LocalTime[]> parseExcludedRanges(List<String> ranges) {
         List<LocalTime[]> result = new ArrayList<>();
         for (String r : ranges) {
-            if (r == null || !r.contains("-")) continue;
+            if (r == null || !r.contains("-")) {
+                continue;
+            }
             String[] parts = r.split("-", 2);
-            if (parts.length != 2) continue;
+            if (parts.length != 2) {
+                continue;
+            }
             try {
                 LocalTime from = LocalTime.parse(parts[0].trim());
                 LocalTime to   = LocalTime.parse(parts[1].trim());
@@ -927,8 +937,8 @@ public class InterviewService {
                 .assigneeName(i.getAssigneeName())
                 .startDate(i.getStartDate())
                 .endDate(i.getEndDate())
-                .dayStartTime(i.getDayStartTime() != null ? i.getDayStartTime() : "09:00")
-                .dayEndTime(i.getDayEndTime()     != null ? i.getDayEndTime()   : "18:00")
+                .dayStartTime(i.getDayStartTime() != null ? i.getDayStartTime() : TIME_START)
+                .dayEndTime(i.getDayEndTime()     != null ? i.getDayEndTime()   : TIME_END)
                 .durationMinutes(i.getDurationMinutes())
                 .interviewsPerDay(i.getInterviewsPerDay())
                 .gridConfigured(i.getGridConfigured())

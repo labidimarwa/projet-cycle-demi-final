@@ -117,7 +117,8 @@ public class AssessmentResultsService {
 
         for (TestTheme theme : assessment.getThemes()) {
             List<ThemeModelResultResponse> modelResults = new ArrayList<>();
-            int themeTotal = 0, themeMax = 0;
+            int themeTotal = 0;
+            int themeMax = 0;
 
             for (ThemeModel tm : theme.getThemeModels()) {
                 Map<String, ModelDimension> dimById = tm.getModel().getDimensions().stream()
@@ -126,10 +127,13 @@ public class AssessmentResultsService {
                 Map<String, Integer> dimScores = new HashMap<>();
                 Map<String, Integer> dimMaxMap = new HashMap<>();
                 for (ModelDimension d : tm.getModel().getDimensions()) {
-                    dimScores.put(d.getId(), 0); dimMaxMap.put(d.getId(), 0);
+                    dimScores.put(d.getId(), 0);
+                    dimMaxMap.put(d.getId(), 0);
                 }
 
-                int modelEarned = 0, modelMaxPts = 0, answered = 0;
+                int modelEarned = 0;
+                int modelMaxPts = 0;
+                int answered = 0;
                 List<QuestionAnswerResponse> questionDetails = new ArrayList<>();
 
                 for (Question q : tm.getQuestions()) {
@@ -284,7 +288,8 @@ public class AssessmentResultsService {
                 .stream().collect(Collectors.toMap(TestSessionAnswerDecision::getQuestionId, d -> d));
 
         List<ThemeAnswersResponse> themeAnswers = new ArrayList<>();
-        int totalEarned = 0, totalMax = 0;
+        int totalEarned = 0;
+        int totalMax = 0;
 
         if (!answersMap.isEmpty()) {
             List<Question> questions = questionRepository.findByIdIn(new ArrayList<>(answersMap.keySet()));
@@ -304,14 +309,17 @@ public class AssessmentResultsService {
                     .themeId(assessment.getId()).themeName(assessment.getName())
                     .themeCategory("LOGIC").totalScore(sessionEarned).maxScore(sessionTotal).percentage(pct)
                     .questions(Collections.emptyList()).build());
-                totalEarned = sessionEarned; totalMax = sessionTotal;
+                totalEarned = sessionEarned;
+                totalMax = sessionTotal;
             }
 
             for (Map.Entry<String, List<Question>> entry : byTheme.entrySet()) {
                 List<Question> themeQs = entry.getValue();
                 themeQs.sort(Comparator.comparingInt(q -> q.getOrderIndex() != null ? q.getOrderIndex() : 0));
 
-                String themeName = assessment.getName(), themeCategory = "LOGIC", themeId = entry.getKey();
+                String themeName = assessment.getName();
+                String themeCategory = "LOGIC";
+                String themeId = entry.getKey();
                 if (!themeQs.isEmpty() && themeQs.get(0).getTheme() != null) {
                     TestTheme th = themeQs.get(0).getTheme();
                     if (th.getName()     != null) themeName     = th.getName();
@@ -320,12 +328,15 @@ public class AssessmentResultsService {
                 }
 
                 List<QuestionAnswerResponse> qResponses = new ArrayList<>();
-                int themeEarned = 0, themeMax = 0;
+                int themeEarned = 0;
+                int themeMax = 0;
                 for (Question q : themeQs) {
                     QuestionAnswerResponse qr = buildQuestionAnswerResponse(
                             q, answersMap.get(q.getId()),
                             decisionsMap.get(q.getId()));
-                    qResponses.add(qr); themeEarned += qr.getEarnedPoints(); themeMax += qr.getPoints();
+                    qResponses.add(qr);
+                    themeEarned += qr.getEarnedPoints();
+                    themeMax += qr.getPoints();
                 }
 
                 totalEarned += themeEarned; totalMax += themeMax;

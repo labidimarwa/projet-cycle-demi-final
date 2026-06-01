@@ -24,9 +24,9 @@ public class FileStorageService {
         String ext = originalName.contains(".")
                 ? originalName.substring(originalName.lastIndexOf(".")).toLowerCase() : ".pdf";
         if (!List.of(".pdf", ".doc", ".docx").contains(ext))
-            throw new RuntimeException("Unsupported format.");
+            throw new IllegalArgumentException("Unsupported format.");
         if (file.getSize() > 5 * 1024 * 1024)
-            throw new RuntimeException("File too large (max 5 MB).");
+            throw new IllegalArgumentException("File too large (max 5 MB).");
         try {
             Path dir = Paths.get(uploadDir).toAbsolutePath();
             Files.createDirectories(dir);
@@ -36,7 +36,7 @@ public class FileStorageService {
                     StandardCopyOption.REPLACE_EXISTING);
             return originalName + "|" + fileName;
         } catch (IOException e) {
-            throw new RuntimeException("File upload error: " + e.getMessage(), e);
+            throw new IllegalStateException("File upload error: " + e.getMessage(), e);
         }
     }
 

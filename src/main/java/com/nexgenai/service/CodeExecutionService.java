@@ -141,7 +141,7 @@ public class CodeExecutionService {
             ProcessBuilder pb;
 
             if (useDocker) {
-                pb = buildDockerProcess(lang, tempDir, codeFile);
+                pb = buildDockerProcess(lang, tempDir);
             } else {
                 // Fallback: direct execution (dev-only, NOT for production)
                 pb = buildDirectProcess(lang, tempDir);
@@ -210,7 +210,7 @@ public class CodeExecutionService {
 
     // ── Build Docker process ──────────────────────────────────────────────────
 
-    private ProcessBuilder buildDockerProcess(String lang, Path tempDir, Path codeFile) {
+    private ProcessBuilder buildDockerProcess(String lang, Path tempDir) {
         String image     = DOCKER_IMAGES.get(lang);
         String[] runCmd  = RUN_COMMANDS.get(lang);
         String mountPath = "/code";
@@ -245,14 +245,14 @@ public class CodeExecutionService {
     }
 
     // ── Direct process (dev fallback — NOT production) ────────────────────────
-    private ProcessBuilder buildDirectProcess(String lang, Path tempDir) throws IOException {
+    private ProcessBuilder buildDirectProcess(String lang, Path tempDir) {
         boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
         List<String> cmd;
 
         if (isWindows) {
             Map<String, String[]> winCommands = Map.of(
-                "python",     new String[]{"python", "solution.py"},
-                "javascript", new String[]{"node", "solution.js"},
+                LANG_PYTHON,     new String[]{LANG_PYTHON, FILE_SOLUTION_PY},
+                LANG_JAVASCRIPT, new String[]{"node", FILE_SOLUTION_JS},
                 "java",       new String[]{"cmd", "/c", "javac Main.java && java Main"},
                 "c",          new String[]{"cmd", "/c", "gcc -O2 -o solution solution.c -lm && solution.exe"},
                 "cpp",        new String[]{"cmd", "/c", "g++ -O2 -std=c++17 -o solution solution.cpp && solution.exe"},
@@ -294,7 +294,9 @@ public class CodeExecutionService {
             double da = Double.parseDouble(a);
             double de = Double.parseDouble(e);
             return Math.abs(da - de) < 1e-6;
-        } catch (NumberFormatException ignored) {}
+        } catch (NumberFormatException e) {
+            log.trace("Not numeric, falling through to line comparison: {}", e.getMessage());
+        }
 
         // Try line-by-line comparison
         String[] aLines = a.split("\n");
@@ -407,7 +409,9 @@ public class CodeExecutionService {
                  .sorted(Comparator.reverseOrder())
                  .map(Path::toFile)
                  .forEach(File::delete);
-        } catch (IOException ignored) {}
+        } catch (IOException e) {
+            log.debug("Failed to delete temp dir {}: {}", dir, e.getMessage());
+        }
     }
 
     private Path createSecureTempDir() throws IOException {
