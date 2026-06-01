@@ -177,7 +177,9 @@ public class CvMatchingService {
         double wSkills  = (jobAvecSkills.getSkillsWeight()        != null ? jobAvecSkills.getSkillsWeight()        : 70) / 100.0;
         double wPrereqs = (jobAvecSkills.getPrerequisitesWeight() != null ? jobAvecSkills.getPrerequisitesWeight() : 30) / 100.0;
         double scoreGlobal = forceRejet ? 0.0
-            : arrondir(scoreSkills * wSkills + scorePrerequisite * wPrereqs);
+            : resultatsPrereqs.isEmpty()
+                ? arrondir(scoreSkills)
+                : arrondir(scoreSkills * wSkills + scorePrerequisite * wPrereqs);
         String recommendation = determinerRecommandation(scoreGlobal, forceRejet);
 
         // ── 7. Sauvegarde BDD (upsert) ────────────────────────────────────────
