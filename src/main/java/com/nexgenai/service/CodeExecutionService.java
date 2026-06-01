@@ -163,17 +163,8 @@ public class CodeExecutionService {
 
             if (!finished) {
                 process.destroyForcibly();
-                return TestCaseResultDto.builder()
-                        .input(tc.getInput())
-                        .expected(tc.getOutput())
-                        .actual("")
-                        .passed(false)
-                        .points(tc.getPoints())
-                        .earnedPoints(0)
-                        .executionMs(timeoutSeconds * 1000L)
-                        .memoryKb(0)
-                        .error("Time Limit Exceeded (" + timeoutSeconds + "s)")
-                        .build();
+                return failResult(tc, timeoutSeconds * 1000L,
+                        "Time Limit Exceeded (" + timeoutSeconds + "s)");
             }
 
             String stdout = stdoutFuture.isDone() ? stdoutFuture.get() : "";
@@ -203,19 +194,8 @@ public class CodeExecutionService {
                     .build();
 
         } catch (Exception e) {
-            long execMs = System.currentTimeMillis() - startMs;
             log.warn("Code execution error: {}", e.getMessage());
-            return TestCaseResultDto.builder()
-                    .input(tc.getInput())
-                    .expected(tc.getOutput())
-                    .actual("")
-                    .passed(false)
-                    .points(tc.getPoints())
-                    .earnedPoints(0)
-                    .executionMs(execMs)
-                    .memoryKb(0)
-                    .error(e.getMessage())
-                    .build();
+            return failResult(tc, System.currentTimeMillis() - startMs, e.getMessage());
         }
     }
 
@@ -396,6 +376,20 @@ public class CodeExecutionService {
         }
 
         return s;
+    }
+
+    private TestCaseResultDto failResult(RunCodeRequest.TestCasePayload tc, long execMs, String error) {
+        return TestCaseResultDto.builder()
+                .input(tc.getInput())
+                .expected(tc.getOutput())
+                .actual("")
+                .passed(false)
+                .points(tc.getPoints())
+                .earnedPoints(0)
+                .executionMs(execMs)
+                .memoryKb(0)
+                .error(error)
+                .build();
     }
 
     private void deleteDirSilently(Path dir) {

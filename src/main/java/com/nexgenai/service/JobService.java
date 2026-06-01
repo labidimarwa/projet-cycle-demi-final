@@ -75,78 +75,22 @@ public class JobService {
         applyRequestToJob(job, req);
         job.setStatus(JobStatus.DRAFT);
         job.setCreatedByHrId(createdByHrId);
-        if (req.getPrerequisites() != null) {
-            req.getPrerequisites().forEach(p -> {
-                Prerequisite prereq = new Prerequisite();
-                prereq.setType(p.getType());
-                prereq.setValue(p.getValue());
-                prereq.setObligatory(p.getObligatory());
-                prereq.setWeight(p.getWeight() != null && p.getWeight() > 0 ? p.getWeight() : 100);
-                prereq.setIcon(p.getIcon());
-                prereq.setCustomType(p.getCustomType());
-                if (p.getOptions() != null)
-                    prereq.setOptions(String.join(",", p.getOptions()));
-                prereq.setInstruction(p.getInstruction());
-                prereq.setJsonSchema(p.getJsonSchema());
-                job.addPrerequisite(prereq);
-            });
-        }
+        if (req.getPrerequisites() != null)
+            req.getPrerequisites().forEach(p -> job.addPrerequisite(buildPrerequisite(p)));
 
-        if (req.getTechnicalSkills() != null) {
-            req.getTechnicalSkills().forEach(s -> {
-                TechnicalSkill skill = new TechnicalSkill();
-                skill.setName(s.getName());
-                skill.setObligatory(s.getObligatory());
-                skill.setWeight(s.getWeight());
-                skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
-                job.addTechnicalSkill(skill);
-            });
-        }
+        if (req.getTechnicalSkills() != null)
+            req.getTechnicalSkills().forEach(s -> job.addTechnicalSkill(buildTechnicalSkill(s)));
 
-        if (req.getAssessments() != null) {
-            req.getAssessments().forEach(a -> {
-                Assessment assessment = new Assessment();
-                assessment.setName(a.getName());
-                assessment.setType(a.getType());
-                assessment.setDuration(a.getDuration());
-                assessment.setPassingScore(a.getPassingScore());
-                assessment.setAssigneeId(a.getAssigneeId());
-                assessment.setAssigneeName(a.getAssigneeName());
-                assessment.setSubmissionDeadline(a.getSubmissionDeadline());
+        if (req.getAssessments() != null)
+            req.getAssessments().forEach(a -> job.addAssessment(buildAssessment(a)));
 
-                // Store linkId so we can match it against workflow stages
-                assessment.setLinkId(a.getLinkId());
-                job.addAssessment(assessment);
-            });
-        }
-
-        if (req.getWorkflowStages() != null) {
-            req.getWorkflowStages().forEach(w -> {
-                WorkflowStage stage = new WorkflowStage();
-                stage.setStageType(w.getStageType());
-                stage.setName(w.getName());
-                stage.setDescription(w.getDescription());
-                stage.setAssignedTo(w.getAssignedTo());
-                stage.setAssigneeId(w.getAssigneeId());
-                stage.setStageOrder(w.getOrder());
-                // Persist the assessmentId link for stages generated from an assessment
-                stage.setAssessmentId(w.getAssessmentId());
-                job.addWorkflowStage(stage);
-            });
-        }
+        if (req.getWorkflowStages() != null)
+            req.getWorkflowStages().forEach(w -> job.addWorkflowStage(buildWorkflowStage(w)));
 
         Job saved = jobRepository.save(job);
         interviewService.createInterviewsForJob(saved);
 
-        // Pre-compute job embeddings in Python asynchronously (once, reused per candidate)
-        final String savedId = saved.getId();
-        final List<TechnicalSkill> savedSkills = saved.getTechnicalSkills() != null
-            ? List.copyOf(saved.getTechnicalSkills()) : List.of();
-        final List<Prerequisite> savedPrereqs = saved.getPrerequisites() != null
-            ? List.copyOf(saved.getPrerequisites()) : List.of();
-        CompletableFuture.runAsync(() ->
-            pythonClient.indexJob(savedId, savedSkills, savedPrereqs)
-        );
+        reindexJobAsync(saved);
 
         // Notify admins that a new job was created
         if (createdByHrId != null) {
@@ -216,33 +160,13 @@ public class JobService {
         // ── Prerequisites ─────────────────────────────────────────────────────
         if (req.getPrerequisites() != null) {
             job.getPrerequisites().clear();
-            req.getPrerequisites().forEach(p -> {
-                Prerequisite prereq = new Prerequisite();
-                prereq.setType(p.getType());
-                prereq.setValue(p.getValue());
-                prereq.setObligatory(p.getObligatory());
-                prereq.setWeight(p.getWeight() != null && p.getWeight() > 0 ? p.getWeight() : 100);
-                prereq.setIcon(p.getIcon());
-                prereq.setCustomType(p.getCustomType());
-                if (p.getOptions() != null)
-                    prereq.setOptions(String.join(",", p.getOptions()));
-                prereq.setInstruction(p.getInstruction());
-                prereq.setJsonSchema(p.getJsonSchema());
-                job.addPrerequisite(prereq);
-            });
+            req.getPrerequisites().forEach(p -> job.addPrerequisite(buildPrerequisite(p)));
         }
 
         // ── Technical Skills ──────────────────────────────────────────────────
         if (req.getTechnicalSkills() != null) {
             job.getTechnicalSkills().clear();
-            req.getTechnicalSkills().forEach(s -> {
-                TechnicalSkill skill = new TechnicalSkill();
-                skill.setName(s.getName());
-                skill.setObligatory(s.getObligatory());
-                skill.setWeight(s.getWeight());
-                skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
-                job.addTechnicalSkill(skill);
-            });
+            req.getTechnicalSkills().forEach(s -> job.addTechnicalSkill(buildTechnicalSkill(s)));
         }
 
         // ── Assessments + Workflow Stages → recréer les interviews ────────────
@@ -250,33 +174,12 @@ public class JobService {
 
         if (req.getAssessments() != null) {
             job.getAssessments().clear();
-            req.getAssessments().forEach(a -> {
-                Assessment assessment = new Assessment();
-                assessment.setName(a.getName());
-                assessment.setType(a.getType());          // AssessmentType enum direct
-                assessment.setDuration(a.getDuration());
-                assessment.setPassingScore(a.getPassingScore());
-                assessment.setAssigneeId(a.getAssigneeId());
-                assessment.setAssigneeName(a.getAssigneeName());
-                assessment.setSubmissionDeadline(a.getSubmissionDeadline());
-                assessment.setLinkId(a.getLinkId());
-                job.addAssessment(assessment);
-            });
+            req.getAssessments().forEach(a -> job.addAssessment(buildAssessment(a)));
         }
 
         if (req.getWorkflowStages() != null) {
             job.getWorkflowStages().clear();
-            req.getWorkflowStages().forEach(w -> {
-                WorkflowStage stage = new WorkflowStage();
-                stage.setStageType(w.getStageType());     // StageType enum direct
-                stage.setName(w.getName());
-                stage.setDescription(w.getDescription());
-                stage.setAssignedTo(w.getAssignedTo());
-                stage.setAssigneeId(w.getAssigneeId());
-                stage.setStageOrder(w.getOrder());
-                stage.setAssessmentId(w.getAssessmentId());
-                job.addWorkflowStage(stage);
-            });
+            req.getWorkflowStages().forEach(w -> job.addWorkflowStage(buildWorkflowStage(w)));
         }
 
         Job saved = jobRepository.save(job);
@@ -288,16 +191,8 @@ public class JobService {
         }
 
         // Re-index job embeddings in Python if skills or prerequisites changed
-        if (req.getTechnicalSkills() != null || req.getPrerequisites() != null) {
-            final String savedId = saved.getId();
-            final List<TechnicalSkill> savedSkills = saved.getTechnicalSkills() != null
-                ? List.copyOf(saved.getTechnicalSkills()) : List.of();
-            final List<Prerequisite> savedPrereqs = saved.getPrerequisites() != null
-                ? List.copyOf(saved.getPrerequisites()) : List.of();
-            CompletableFuture.runAsync(() ->
-                pythonClient.indexJob(savedId, savedSkills, savedPrereqs)
-            );
-        }
+        if (req.getTechnicalSkills() != null || req.getPrerequisites() != null)
+            reindexJobAsync(saved);
 
         return mapToResponse(saved);
     }
@@ -475,6 +370,68 @@ public class JobService {
 
         return r;
     }
+    // ── Entity builders (eliminate duplication between createJob / patchJob) ────
+
+    private Prerequisite buildPrerequisite(CreateJobRequest.PrerequisiteDTO p) {
+        Prerequisite prereq = new Prerequisite();
+        prereq.setType(p.getType());
+        prereq.setValue(p.getValue());
+        prereq.setObligatory(p.getObligatory());
+        prereq.setWeight(p.getWeight() != null && p.getWeight() > 0 ? p.getWeight() : 100);
+        prereq.setIcon(p.getIcon());
+        prereq.setCustomType(p.getCustomType());
+        if (p.getOptions() != null)
+            prereq.setOptions(String.join(",", p.getOptions()));
+        prereq.setInstruction(p.getInstruction());
+        prereq.setJsonSchema(p.getJsonSchema());
+        return prereq;
+    }
+
+    private TechnicalSkill buildTechnicalSkill(CreateJobRequest.TechnicalSkillDTO s) {
+        TechnicalSkill skill = new TechnicalSkill();
+        skill.setName(s.getName());
+        skill.setObligatory(s.getObligatory());
+        skill.setWeight(s.getWeight());
+        skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+        return skill;
+    }
+
+    private Assessment buildAssessment(CreateJobRequest.AssessmentDTO a) {
+        Assessment assessment = new Assessment();
+        assessment.setName(a.getName());
+        assessment.setType(a.getType());
+        assessment.setDuration(a.getDuration());
+        assessment.setPassingScore(a.getPassingScore());
+        assessment.setAssigneeId(a.getAssigneeId());
+        assessment.setAssigneeName(a.getAssigneeName());
+        assessment.setSubmissionDeadline(a.getSubmissionDeadline());
+        assessment.setLinkId(a.getLinkId());
+        return assessment;
+    }
+
+    private WorkflowStage buildWorkflowStage(CreateJobRequest.WorkflowStageDTO w) {
+        WorkflowStage stage = new WorkflowStage();
+        stage.setStageType(w.getStageType());
+        stage.setName(w.getName());
+        stage.setDescription(w.getDescription());
+        stage.setAssignedTo(w.getAssignedTo());
+        stage.setAssigneeId(w.getAssigneeId());
+        stage.setStageOrder(w.getOrder());
+        stage.setAssessmentId(w.getAssessmentId());
+        return stage;
+    }
+
+    private void reindexJobAsync(Job saved) {
+        final String savedId = saved.getId();
+        final List<TechnicalSkill> savedSkills = saved.getTechnicalSkills() != null
+            ? List.copyOf(saved.getTechnicalSkills()) : List.of();
+        final List<Prerequisite> savedPrereqs = saved.getPrerequisites() != null
+            ? List.copyOf(saved.getPrerequisites()) : List.of();
+        CompletableFuture.runAsync(() ->
+            pythonClient.indexJob(savedId, savedSkills, savedPrereqs)
+        );
+    }
+
     public String generateLink(String jobId) {
         // Verify job exists
         jobRepository.findById(jobId)

@@ -68,16 +68,9 @@ public class ApplicationService {
 
         // ── Notify HR of new application ─────────────────────────────────────
         String candidateName = candidate.getFirstName() + " " + candidate.getLastName();
-        jobRepository.findById(jobId).ifPresent(job -> {
-            if (job.getCreatedByHrId() != null) {
-                notificationService.send(
-                    job.getCreatedByHrId(), NotificationType.NEW_APPLICATION,
-                    "New Application",
-                    candidateName + " just applied to \"" + job.getTitle() + "\".",
-                    jobId, "JOB", "/hr/jobs/" + jobId + "/candidates"
-                );
-            }
-        });
+        notifyHr(jobId, NotificationType.NEW_APPLICATION,
+            "New Application",
+            candidateName + " just applied to \"%s\".");
 
         // ── Trigger async AI matching ────────────────────────────────────────
         String candidateId = candidate.getId();
@@ -87,16 +80,9 @@ public class ApplicationService {
                 log.info("✅ Matching IA terminé : {} → job {}", candidateEmail, jobId);
 
                 // Notify HR that match score is ready
-                jobRepository.findById(jobId).ifPresent(job -> {
-                    if (job.getCreatedByHrId() != null) {
-                        notificationService.send(
-                            job.getCreatedByHrId(), NotificationType.MATCH_READY,
-                            "AI Match Ready",
-                            "Match score computed for " + candidateName + " on \"" + job.getTitle() + "\".",
-                            jobId, "JOB", "/hr/jobs/" + jobId + "/candidates"
-                        );
-                    }
-                });
+                notifyHr(jobId, NotificationType.MATCH_READY,
+                    "AI Match Ready",
+                    "Match score computed for " + candidateName + " on \"%s\".");
 
                 // Notify candidate that their match is visible
                 notificationService.send(
@@ -126,6 +112,18 @@ public class ApplicationService {
             }
         } catch (Exception ignored) {}
         return "unknown";
+    }
+
+    private void notifyHr(String jobId, NotificationType type, String title, String bodyTemplate) {
+        jobRepository.findById(jobId).ifPresent(job -> {
+            if (job.getCreatedByHrId() != null) {
+                notificationService.send(
+                    job.getCreatedByHrId(), type, title,
+                    String.format(bodyTemplate, job.getTitle()),
+                    jobId, "JOB", "/hr/jobs/" + jobId + "/candidates"
+                );
+            }
+        });
     }
 
     private Candidate findCandidate(String email) {
