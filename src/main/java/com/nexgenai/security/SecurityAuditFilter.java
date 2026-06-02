@@ -41,8 +41,11 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
     );
 
     // ── SQL injection patterns (split to keep complexity ≤ 20 each) ─────────
-    private static final Pattern SQLI_KEYWORDS = Pattern.compile(
-        "'\\s*(or|and)\\s+['\"]?\\w|--(?:\\s|$|;|')|" +
+    private static final Pattern SQLI_COMMENTS = Pattern.compile(
+        "'\\s*(or|and)\\s+['\"]?\\w|--(?:\\s|$|;|')",
+        Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern SQLI_DDL = Pattern.compile(
         ";\\s*(drop|delete|truncate|update|insert|alter|create|exec)\\s",
         Pattern.CASE_INSENSITIVE
     );
@@ -159,7 +162,8 @@ public class SecurityAuditFilter extends OncePerRequestFilter {
     }
 
     private boolean isSqli(String value) {
-        return SQLI_KEYWORDS.matcher(value).find()
+        return SQLI_COMMENTS.matcher(value).find()
+            || SQLI_DDL.matcher(value).find()
             || SQLI_FUNCTIONS.matcher(value).find();
     }
 

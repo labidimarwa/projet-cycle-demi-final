@@ -103,7 +103,7 @@ public class CvMatchingService {
         if (cvBytes == null || cvBytes.length == 0) {
             cvFilename = nomFichierCv(candidat);
         }
-        cvBytes = resolverBytesCV(candidat, cvBytes, cvFilename);
+        cvBytes = resolverBytesCV(candidat, cvBytes);
 
         // ── Cache : même CV + même poste → rapport existant (avant appel Python) ──
         String cvHash = md5(cvBytes);
@@ -404,7 +404,7 @@ public class CvMatchingService {
     // Helpers extraits de lancerMatching
     // ═════════════════════════════════════════════════════════════════════════
 
-    private byte[] resolverBytesCV(Candidate candidat, byte[] cvBytes, String cvFilename) {
+    private byte[] resolverBytesCV(Candidate candidat, byte[] cvBytes) {
         if (cvBytes != null && cvBytes.length > 0) return cvBytes;
         byte[] fromDisk = lireCvDuDisque(candidat);
         if (fromDisk == null || fromDisk.length == 0)

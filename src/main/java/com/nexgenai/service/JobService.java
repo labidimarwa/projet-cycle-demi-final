@@ -53,7 +53,8 @@ public class JobService {
     private final UserRepository        userRepository;
     private final PythonExtractorClient pythonClient;
 
-    private static final String JOB_NOT_FOUND = "Job not found: ";
+    private static final String JOB_NOT_FOUND    = "Job not found: ";
+    private static final String DEFAULT_SKILL_TYPE = "TECHNICAL";
 
     @Value("${app.frontend-url:http://localhost:4200}")
     private String frontendBaseUrl;
@@ -143,7 +144,39 @@ public class JobService {
         Job job = jobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException(JOB_NOT_FOUND + id));
 
-        // ── Scalar fields ─────────────────────────────────────────────────────
+        patchScalarFields(job, req);
+
+        if (req.getPrerequisites() != null) {
+            job.getPrerequisites().clear();
+            req.getPrerequisites().forEach(p -> job.addPrerequisite(buildPrerequisite(p)));
+        }
+        if (req.getTechnicalSkills() != null) {
+            job.getTechnicalSkills().clear();
+            req.getTechnicalSkills().forEach(s -> job.addTechnicalSkill(buildTechnicalSkill(s)));
+        }
+
+        boolean interviewsNeedRebuild = req.getAssessments() != null || req.getWorkflowStages() != null;
+        if (req.getAssessments() != null) {
+            job.getAssessments().clear();
+            req.getAssessments().forEach(a -> job.addAssessment(buildAssessment(a)));
+        }
+        if (req.getWorkflowStages() != null) {
+            job.getWorkflowStages().clear();
+            req.getWorkflowStages().forEach(w -> job.addWorkflowStage(buildWorkflowStage(w)));
+        }
+
+        Job saved = jobRepository.save(job);
+        if (interviewsNeedRebuild) {
+            interviewService.deleteInterviewsForJob(saved);
+            interviewService.createInterviewsForJob(saved);
+        }
+        if (req.getTechnicalSkills() != null || req.getPrerequisites() != null)
+            reindexJobAsync(saved);
+
+        return mapToResponse(saved);
+    }
+
+    private void patchScalarFields(Job job, UpdateJobRequest req) {
         if (req.getTitle()           != null) job.setTitle(req.getTitle());
         if (req.getDepartment()      != null) job.setDepartment(req.getDepartment());
         if (req.getLocation()        != null) job.setLocation(req.getLocation());
@@ -154,49 +187,10 @@ public class JobService {
         if (req.getClosingDate()     != null) job.setClosingDate(req.getClosingDate());
         if (req.getIsRemote()        != null) job.setIsRemote(req.getIsRemote());
         if (req.getStatus()          != null) job.setStatus(req.getStatus());
-        if (req.getSkillsWeight()          != null) job.setSkillsWeight(req.getSkillsWeight());
-        if (req.getPrerequisitesWeight()   != null) job.setPrerequisitesWeight(req.getPrerequisitesWeight());
-        if (req.getTechnicalSkillWeight()  != null) job.setTechnicalSkillWeight(req.getTechnicalSkillWeight());
-        if (req.getSoftSkillWeight()       != null) job.setSoftSkillWeight(req.getSoftSkillWeight());
-
-        // ── Prerequisites ─────────────────────────────────────────────────────
-        if (req.getPrerequisites() != null) {
-            job.getPrerequisites().clear();
-            req.getPrerequisites().forEach(p -> job.addPrerequisite(buildPrerequisite(p)));
-        }
-
-        // ── Technical Skills ──────────────────────────────────────────────────
-        if (req.getTechnicalSkills() != null) {
-            job.getTechnicalSkills().clear();
-            req.getTechnicalSkills().forEach(s -> job.addTechnicalSkill(buildTechnicalSkill(s)));
-        }
-
-        // ── Assessments + Workflow Stages → recréer les interviews ────────────
-        boolean interviewsNeedRebuild = req.getAssessments() != null || req.getWorkflowStages() != null;
-
-        if (req.getAssessments() != null) {
-            job.getAssessments().clear();
-            req.getAssessments().forEach(a -> job.addAssessment(buildAssessment(a)));
-        }
-
-        if (req.getWorkflowStages() != null) {
-            job.getWorkflowStages().clear();
-            req.getWorkflowStages().forEach(w -> job.addWorkflowStage(buildWorkflowStage(w)));
-        }
-
-        Job saved = jobRepository.save(job);
-
-        // Recréer les interviews si le workflow ou les assessments ont changé
-        if (interviewsNeedRebuild) {
-            interviewService.deleteInterviewsForJob(saved);
-            interviewService.createInterviewsForJob(saved);
-        }
-
-        // Re-index job embeddings in Python if skills or prerequisites changed
-        if (req.getTechnicalSkills() != null || req.getPrerequisites() != null)
-            reindexJobAsync(saved);
-
-        return mapToResponse(saved);
+        if (req.getSkillsWeight()         != null) job.setSkillsWeight(req.getSkillsWeight());
+        if (req.getPrerequisitesWeight()  != null) job.setPrerequisitesWeight(req.getPrerequisitesWeight());
+        if (req.getTechnicalSkillWeight() != null) job.setTechnicalSkillWeight(req.getTechnicalSkillWeight());
+        if (req.getSoftSkillWeight()      != null) job.setSoftSkillWeight(req.getSoftSkillWeight());
     }
     
     // ── STATUS CHANGE ─────────────────────────────────────────────────────────
@@ -297,7 +291,7 @@ public class JobService {
         job.setDescription(req.getDescription());
         job.setOpenPositions(req.getOpenPositions() != null ? req.getOpenPositions() : 1);
         job.setClosingDate(req.getClosingDate());
-        job.setIsRemote(req.getIsRemote() != null ? req.getIsRemote() : false);
+        job.setIsRemote(req.getIsRemote() != null && req.getIsRemote());
         job.setSkillsWeight(req.getSkillsWeight() != null ? req.getSkillsWeight() : 70);
         job.setPrerequisitesWeight(req.getPrerequisitesWeight() != null ? req.getPrerequisitesWeight() : 30);
         job.setTechnicalSkillWeight(req.getTechnicalSkillWeight() != null ? req.getTechnicalSkillWeight() : 60);
@@ -341,7 +335,7 @@ public class JobService {
                 JobResponse.TechnicalSkillDTO d = new JobResponse.TechnicalSkillDTO();
                 d.setId(s.getId()); d.setName(s.getName());
                 d.setObligatory(s.getObligatory()); d.setWeight(s.getWeight());
-                d.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+                d.setSkillType(s.getSkillType() != null ? s.getSkillType() : DEFAULT_SKILL_TYPE);
                 return d;
             }).collect(Collectors.toList()));
 
@@ -399,7 +393,7 @@ public class JobService {
         skill.setName(s.getName());
         skill.setObligatory(s.getObligatory());
         skill.setWeight(s.getWeight());
-        skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+        skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : DEFAULT_SKILL_TYPE);
         return skill;
     }
 
@@ -449,7 +443,7 @@ public class JobService {
         skill.setName(s.getName());
         skill.setObligatory(s.getObligatory());
         skill.setWeight(s.getWeight());
-        skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : "TECHNICAL");
+        skill.setSkillType(s.getSkillType() != null ? s.getSkillType() : DEFAULT_SKILL_TYPE);
         return skill;
     }
 

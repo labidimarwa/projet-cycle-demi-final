@@ -39,11 +39,12 @@ import java.util.concurrent.*;
 @Slf4j
 public class CodeExecutionService {
 
-    private static final String LANG_PYTHON     = "python";
-    private static final String LANG_JAVASCRIPT = "javascript";
+    private static final String LANG_PYTHON      = "python";
+    private static final String LANG_JAVASCRIPT  = "javascript";
     private static final String FILE_SOLUTION_PY = "solution.py";
     private static final String FILE_SOLUTION_JS = "solution.js";
     private static final String COMMA_SPACE_REGEX = ",\\s*";
+    private static final String DOCKER_MOUNT_PATH = "/code";
 
     @Value("${app.code-execution.timeout-seconds:10}")
     private int timeoutSeconds;
@@ -211,7 +212,7 @@ public class CodeExecutionService {
     private ProcessBuilder buildDockerProcess(String lang, Path tempDir) {
         String image     = DOCKER_IMAGES.get(lang);
         String[] runCmd  = RUN_COMMANDS.get(lang);
-        String mountPath = "/code";
+        String mountPath = DOCKER_MOUNT_PATH;
 
         List<String> cmd = new ArrayList<>();
         cmd.add("docker");

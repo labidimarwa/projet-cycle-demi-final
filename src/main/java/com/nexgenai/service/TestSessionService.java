@@ -433,19 +433,28 @@ public class TestSessionService {
         int earnedPoints = 0;
         for (TestTheme theme : assessment.getThemes()) {
             for (ThemeModel tm : theme.getThemeModels()) {
-                int weight = (tm.getWeight() != null && tm.getWeight() > 0) ? tm.getWeight() : 1;
-                for (Question question : tm.getQuestions()) {
-                    List<QuestionOption> opts = new ArrayList<>(question.getOptions());
-                    int maxPts = opts.stream().mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).max().orElse(0);
-                    totalPoints += maxPts * weight;
-                    List<String> chosen = answers.getOrDefault(question.getId(), List.of());
-                    int pts = opts.stream().filter(o -> chosen.contains(o.getId()))
-                            .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
-                    earnedPoints += Math.max(0, pts) * weight;
-                }
+                int[] pts = scoreThemeModel(tm, answers);
+                totalPoints  += pts[0];
+                earnedPoints += pts[1];
             }
         }
         return new int[]{totalPoints, earnedPoints};
+    }
+
+    private int[] scoreThemeModel(ThemeModel tm, Map<String, List<String>> answers) {
+        int weight = (tm.getWeight() != null && tm.getWeight() > 0) ? tm.getWeight() : 1;
+        int total = 0;
+        int earned = 0;
+        for (Question question : tm.getQuestions()) {
+            List<QuestionOption> opts = new ArrayList<>(question.getOptions());
+            int maxPts = opts.stream().mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).max().orElse(0);
+            total += maxPts * weight;
+            List<String> chosen = answers.getOrDefault(question.getId(), List.of());
+            int pts = opts.stream().filter(o -> chosen.contains(o.getId()))
+                    .mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
+            earned += Math.max(0, pts) * weight;
+        }
+        return new int[]{total, earned};
     }
 
     private void persistFinalAnswers(TestSession session, Map<String, Object> answers) {
@@ -637,6 +646,19 @@ public class TestSessionService {
             .earnedPoints(earned).maxPoints(maxPts).build());
     }
 
+    private Object extractSavedValue(TestSessionAnswer savedAnswer) {
+        if (savedAnswer == null) return null;
+        if (savedAnswer.getSubmittedCode() != null) {
+            Map<String, Object> codeMap = new LinkedHashMap<>();
+            codeMap.put("code", savedAnswer.getSubmittedCode());
+            codeMap.put("language", savedAnswer.getSubmittedLanguage());
+            return codeMap;
+        }
+        if (savedAnswer.getLikertValue() != null) return savedAnswer.getLikertValue();
+        if (!savedAnswer.getSelectedOptionIds().isEmpty()) return savedAnswer.getSelectedOptionIds();
+        return null;
+    }
+
     private int estimateEarned(Question q, TestSessionAnswer saved) {
         if (saved == null) return 0;
         if (q.getKind() == Question.QuestionKind.PROBLEM_SOLVING) {
@@ -668,19 +690,7 @@ public class TestSessionService {
                     .toList();
         }
 
-        Object savedValue = null;
-        if (savedAnswer != null) {
-            if (savedAnswer.getSubmittedCode() != null) {
-                Map<String, Object> codeMap = new LinkedHashMap<>();
-                codeMap.put("code", savedAnswer.getSubmittedCode());
-                codeMap.put("language", savedAnswer.getSubmittedLanguage());
-                savedValue = codeMap;
-            } else if (savedAnswer.getLikertValue() != null) {
-                savedValue = savedAnswer.getLikertValue();
-            } else if (!savedAnswer.getSelectedOptionIds().isEmpty()) {
-                savedValue = savedAnswer.getSelectedOptionIds();
-            }
-        }
+        Object savedValue = extractSavedValue(savedAnswer);
 
         return SimpleQuestionDto.builder()
                 .id(q.getId()).title(q.getTitle()).statement(q.getStatement())

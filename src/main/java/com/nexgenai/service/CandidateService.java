@@ -94,7 +94,7 @@ public class CandidateService {
 
     public Path getCvFilePath(String email) {
         Candidate c = findCandidate(email);
-        if (c.getCvPath() == null) throw new RuntimeException("No CV uploaded");
+        if (c.getCvPath() == null) throw new IllegalStateException("No CV uploaded");
         return fileStorageService.getFilePath(c.getCvPath());
     }
 

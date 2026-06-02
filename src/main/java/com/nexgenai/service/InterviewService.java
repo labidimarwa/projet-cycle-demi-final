@@ -204,27 +204,8 @@ public class InterviewService {
             }
         }
 
-        if (req.getAssigneeIds() != null && !req.getAssigneeIds().isEmpty()) {
-            try {
-                interview.setAssigneeIdsJson(objectMapper.writeValueAsString(req.getAssigneeIds()));
-                String firstId = req.getAssigneeIds().get(0);
-                userRepository.findById(firstId).ifPresent(u -> {
-                    interview.setAssigneeId(firstId);
-                    interview.setAssigneeName(u.getFirstName() + " " + u.getLastName());
-                });
-            } catch (Exception e) {
-                log.warn("Could not serialize assignee IDs: {}", e.getMessage());
-            }
-        }
-
-        if (req.getEvaluationGrid() != null && !req.getEvaluationGrid().isEmpty()) {
-            try {
-                interview.setEvaluationGridJson(objectMapper.writeValueAsString(req.getEvaluationGrid()));
-                interview.setGridConfigured(true);
-            } catch (Exception e) {
-                log.warn("Could not serialize evaluation grid: {}", e.getMessage());
-            }
-        }
+        configureAssignees(interview, req);
+        configureEvaluationGrid(interview, req);
 
         if (STATUS_NOT_CONFIGURED.equals(interview.getPhaseStatus())) {
             interview.setPhaseStatus("CONFIGURED");
@@ -232,6 +213,51 @@ public class InterviewService {
 
         interviewRepository.save(interview);
         return toSummary(interview);
+    }
+
+    private void buildSlotsForRound(String interviewId, LocalDateTime roundStart, LocalDateTime roundEnd,
+            int parallelism, List<String> candidateIds, List<String> assigneeIds,
+            Map<String, String> assigneeNames, int[] candidateIdx, List<InterviewSlot> slots) {
+        for (int i = 0; i < parallelism && candidateIdx[0] < candidateIds.size(); i++) {
+            String candidateId = candidateIds.get(candidateIdx[0]++);
+            User candidate = userRepository.findById(candidateId).orElse(null);
+            if (candidate == null) continue;
+            String assigneeId   = assigneeIds.get(i % parallelism);
+            String assigneeName = assigneeNames.getOrDefault(assigneeId, "");
+            InterviewSlot slot = InterviewSlot.builder()
+                    .interviewId(interviewId).candidateId(candidateId)
+                    .candidateName(candidate.getFirstName() + " " + candidate.getLastName())
+                    .candidateEmail(candidate.getEmail())
+                    .assigneeId(assigneeId).assigneeName(assigneeName)
+                    .slotStart(roundStart).slotEnd(roundEnd)
+                    .status(InterviewSlot.SlotStatus.SCHEDULED).decision(DECISION_PENDING)
+                    .build();
+            slots.add(slotRepository.save(slot));
+        }
+    }
+
+    private void configureAssignees(Interview interview, InterviewConfigRequest req) {
+        if (req.getAssigneeIds() == null || req.getAssigneeIds().isEmpty()) return;
+        try {
+            interview.setAssigneeIdsJson(objectMapper.writeValueAsString(req.getAssigneeIds()));
+            String firstId = req.getAssigneeIds().get(0);
+            userRepository.findById(firstId).ifPresent(u -> {
+                interview.setAssigneeId(firstId);
+                interview.setAssigneeName(u.getFirstName() + " " + u.getLastName());
+            });
+        } catch (Exception e) {
+            log.warn("Could not serialize assignee IDs: {}", e.getMessage());
+        }
+    }
+
+    private void configureEvaluationGrid(Interview interview, InterviewConfigRequest req) {
+        if (req.getEvaluationGrid() == null || req.getEvaluationGrid().isEmpty()) return;
+        try {
+            interview.setEvaluationGridJson(objectMapper.writeValueAsString(req.getEvaluationGrid()));
+            interview.setGridConfigured(true);
+        } catch (Exception e) {
+            log.warn("Could not serialize evaluation grid: {}", e.getMessage());
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -296,38 +322,13 @@ public class InterviewService {
 
         // Build slots: for each round, assign up to `parallelism` candidates
         List<InterviewSlot> slots = new ArrayList<>();
-        int candidateIdx = 0;
+        int[] candidateIdx = {0};
 
         for (LocalDateTime roundStart : rounds) {
-            if (candidateIdx >= candidateIds.size()) {
-                break;
-            }
+            if (candidateIdx[0] >= candidateIds.size()) break;
             LocalDateTime roundEnd = roundStart.plusMinutes(duration);
-            for (int i = 0; i < parallelism && candidateIdx < candidateIds.size(); i++) {
-                String candidateId = candidateIds.get(candidateIdx++);
-                User candidate = userRepository.findById(candidateId).orElse(null);
-                if (candidate == null) {
-                    continue;
-                }
-
-                String assigneeId   = assigneeIds.get(i % parallelism);
-                String assigneeName = assigneeNames.getOrDefault(assigneeId, "");
-
-                InterviewSlot slot = InterviewSlot.builder()
-                        .interviewId(interviewId)
-                        .candidateId(candidateId)
-                        .candidateName(candidate.getFirstName() + " " + candidate.getLastName())
-                        .candidateEmail(candidate.getEmail())
-                        .assigneeId(assigneeId)
-                        .assigneeName(assigneeName)
-                        .slotStart(roundStart)
-                        .slotEnd(roundEnd)
-                        .status(InterviewSlot.SlotStatus.SCHEDULED)
-                        .decision(DECISION_PENDING)
-                        .build();
-
-                slots.add(slotRepository.save(slot));
-            }
+            buildSlotsForRound(interviewId, roundStart, roundEnd, parallelism,
+                    candidateIds, assigneeIds, assigneeNames, candidateIdx, slots);
         }
 
         // Compute phase end = last slot end
@@ -484,22 +485,24 @@ public class InterviewService {
         return slotRepository.findByCandidateId(candidateId).stream()
                 .sorted(Comparator.comparing(
                         s -> s.getSlotStart() != null ? s.getSlotStart() : LocalDateTime.MIN))
-                .map(slot -> {
-                    Interview interview = interviewRepository.findById(slot.getInterviewId()).orElse(null);
-                    return CandidateSlotView.builder()
-                            .id(slot.getId())
-                            .jobId(interview != null ? interview.getJobId() : null)
-                            .jobTitle(interview != null ? interview.getJobTitle() : null)
-                            .stageName(interview != null ? interview.getStageName() : null)
-                            .stageType(interview != null ? interview.getStageType() : null)
-                            .slotStart(slot.getSlotStart() != null ? slot.getSlotStart().toString() : null)
-                            .slotEnd(slot.getSlotEnd() != null ? slot.getSlotEnd().toString() : null)
-                            .status(slot.getStatus() != null ? slot.getStatus().name() : null)
-                            .decision(slot.getDecision())
-                            .assigneeName(slot.getAssigneeName())
-                            .build();
-                })
+                .map(this::toCandidateSlotView)
                 .toList();
+    }
+
+    private CandidateSlotView toCandidateSlotView(InterviewSlot slot) {
+        Interview interview = interviewRepository.findById(slot.getInterviewId()).orElse(null);
+        return CandidateSlotView.builder()
+                .id(slot.getId())
+                .jobId(interview != null ? interview.getJobId() : null)
+                .jobTitle(interview != null ? interview.getJobTitle() : null)
+                .stageName(interview != null ? interview.getStageName() : null)
+                .stageType(interview != null ? interview.getStageType() : null)
+                .slotStart(slot.getSlotStart() != null ? slot.getSlotStart().toString() : null)
+                .slotEnd(slot.getSlotEnd() != null ? slot.getSlotEnd().toString() : null)
+                .status(slot.getStatus() != null ? slot.getStatus().name() : null)
+                .decision(slot.getDecision())
+                .assigneeName(slot.getAssigneeName())
+                .build();
     }
 
     @Transactional
@@ -553,28 +556,26 @@ public class InterviewService {
         if (thisStage == null) return;
 
         List<StageType> testTypes = List.of(StageType.RH_TEST, StageType.TECHNICAL_TEST);
+        final WorkflowStage currentStage = thisStage;
 
-        for (WorkflowStage stage : allStages) {
-            if (stage.getStageOrder() >= thisStage.getStageOrder()) {
-                break;
-            }
-            if (!testTypes.contains(stage.getStageType())) {
-                continue;
-            }
+        allStages.stream()
+                .filter(s -> s.getStageOrder() < currentStage.getStageOrder())
+                .filter(s -> testTypes.contains(s.getStageType()))
+                .forEach(stage -> checkNoActiveTestCandidates(interview.getJobId(), stage));
+    }
 
-            long activeCount = stageProgressRepository
-                    .findByJobIdAndStageType(interview.getJobId(), stage.getStageType().name())
-                    .stream()
-                    .filter(p -> p.getStatus() == StageProgressStatus.IN_PROGRESS
-                              || p.getStatus() == StageProgressStatus.PENDING)
-                    .count();
-
-            if (activeCount > 0) {
-                throw new IllegalStateException(
-                        "Cannot generate interview slots: the test phase '" + stage.getName() +
-                        "' still has " + activeCount + " candidate(s) in progress or pending. " +
-                        "All tests must be completed or rejected before scheduling interviews.");
-            }
+    private void checkNoActiveTestCandidates(String jobId, WorkflowStage stage) {
+        long activeCount = stageProgressRepository
+                .findByJobIdAndStageType(jobId, stage.getStageType().name())
+                .stream()
+                .filter(p -> p.getStatus() == StageProgressStatus.IN_PROGRESS
+                          || p.getStatus() == StageProgressStatus.PENDING)
+                .count();
+        if (activeCount > 0) {
+            throw new IllegalStateException(
+                    "Cannot generate interview slots: the test phase '" + stage.getName() +
+                    "' still has " + activeCount + " candidate(s) in progress or pending. " +
+                    "All tests must be completed or rejected before scheduling interviews.");
         }
     }
 
@@ -703,33 +704,31 @@ public class InterviewService {
         LocalTime dayStart = parseTime(cfg.dayStart(), LocalTime.of(9, 0));
         LocalTime dayEnd   = parseTime(cfg.dayEnd(),   LocalTime.of(18, 0));
 
-        LocalDate current = start;
-        while (!current.isAfter(end)) {
+        for (LocalDate current = start; !current.isAfter(end); current = current.plusDays(1)) {
             DayOfWeek dow = current.getDayOfWeek();
-
-            // Skip weekends
             boolean isWeekend = dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY;
-            // Skip dates occupied by a previous phase
-            boolean isBlocked = blockedDates.contains(current);
-
-            if (!isWeekend && !isBlocked) {
-                LocalTime time         = dayStart;
-                int       roundsToday  = 0;
-
-                while (roundsToday < maxRoundsPerDay) {
-                    LocalTime slotEnd = time.plusMinutes(durationMinutes);
-                    if (slotEnd.isAfter(dayEnd)) break;
-
-                    if (!overlapsExcluded(time, slotEnd, excluded)) {
-                        rounds.add(LocalDateTime.of(current, time));
-                        roundsToday++;
-                    }
-                    time = slotEnd;
-                }
+            if (!isWeekend && !blockedDates.contains(current)) {
+                addRoundsForDay(rounds, current, dayStart, dayEnd,
+                        durationMinutes, maxRoundsPerDay, excluded);
             }
-            current = current.plusDays(1);
         }
         return rounds;
+    }
+
+    private void addRoundsForDay(List<LocalDateTime> rounds, LocalDate date,
+            LocalTime dayStart, LocalTime dayEnd, int durationMinutes,
+            int maxRoundsPerDay, List<LocalTime[]> excluded) {
+        LocalTime time = dayStart;
+        int roundsToday = 0;
+        while (roundsToday < maxRoundsPerDay) {
+            LocalTime slotEnd = time.plusMinutes(durationMinutes);
+            if (slotEnd.isAfter(dayEnd)) break;
+            if (!overlapsExcluded(time, slotEnd, excluded)) {
+                rounds.add(LocalDateTime.of(date, time));
+                roundsToday++;
+            }
+            time = slotEnd;
+        }
     }
 
     private boolean overlapsExcluded(LocalTime slotStart, LocalTime slotEnd, List<LocalTime[]> excluded) {
@@ -741,23 +740,22 @@ public class InterviewService {
 
     private List<LocalTime[]> parseExcludedRanges(List<String> ranges) {
         List<LocalTime[]> result = new ArrayList<>();
-        for (String r : ranges) {
-            if (r == null || !r.contains("-")) {
-                continue;
-            }
-            String[] parts = r.split("-", 2);
-            if (parts.length != 2) {
-                continue;
-            }
-            try {
-                LocalTime from = LocalTime.parse(parts[0].trim());
-                LocalTime to   = LocalTime.parse(parts[1].trim());
-                if (from.isBefore(to)) result.add(new LocalTime[]{from, to});
-            } catch (Exception e) {
-                log.warn("Cannot parse excluded range '{}': {}", r, e.getMessage());
-            }
-        }
+        ranges.stream()
+              .filter(r -> r != null && r.contains("-"))
+              .forEach(r -> parseOneExcludedRange(r, result));
         return result;
+    }
+
+    private void parseOneExcludedRange(String r, List<LocalTime[]> result) {
+        String[] parts = r.split("-", 2);
+        if (parts.length != 2) return;
+        try {
+            LocalTime from = LocalTime.parse(parts[0].trim());
+            LocalTime to   = LocalTime.parse(parts[1].trim());
+            if (from.isBefore(to)) result.add(new LocalTime[]{from, to});
+        } catch (Exception e) {
+            log.warn("Cannot parse excluded range '{}': {}", r, e.getMessage());
+        }
     }
 
     private LocalTime parseTime(String hhmm, LocalTime fallback) {

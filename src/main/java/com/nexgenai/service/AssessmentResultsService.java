@@ -318,40 +318,45 @@ public class AssessmentResultsService {
     private int[] processRhQuestion(Question q, String selectedOptionId,
             Map<String, Integer> dimScores, Map<String, Integer> dimMaxMap,
             Map<String, ModelDimension> dimById, List<QuestionAnswerResponse> questionDetails) {
-        int qEarned    = 0;
-        int mEarned    = 0;
-        int mMax       = 0;
-        int answeredDelta = 0;
+        int[] totals = new int[3]; // [qEarned, mEarned, mMax, answeredDelta] → 4 slots: use index 0=qEarned,1=mEarned,2=mMax,3=answered
+        int[] counts = {0, 0, 0, 0}; // qEarned, mEarned, mMax, answered
         List<QcmOptionAnswerResponse> optionResponses = new ArrayList<>();
         for (QuestionOption opt : q.getOptions()) {
-            boolean selected = opt.getId() != null && opt.getId().equals(selectedOptionId);
-            int pts = opt.getPoints() != null ? opt.getPoints() : 0;
-            if (pts > 0 && opt.getDimensionId() != null) {
-                dimMaxMap.merge(opt.getDimensionId(), pts, Integer::sum);
-                mMax += pts;
-            }
-            if (selected) {
-                if (opt.getDimensionId() != null) dimScores.merge(opt.getDimensionId(), pts, Integer::sum);
-                mEarned += pts; qEarned += pts; answeredDelta++;
-            }
-            ModelDimension dimObj = opt.getDimensionId() != null ? dimById.get(opt.getDimensionId()) : null;
-            optionResponses.add(QcmOptionAnswerResponse.builder()
-                .id(opt.getId()).text(opt.getText()).isCorrect(false).points(pts)
-                .selected(selected).dimensionId(opt.getDimensionId())
-                .dimensionName(dimObj != null ? dimObj.getName() : null)
-                .optionText(opt.getText()).build());
+            processRhOption(opt, selectedOptionId, dimScores, dimMaxMap, dimById, counts, optionResponses);
         }
         int maxPts = q.getOptions().stream().mapToInt(o -> o.getPoints() != null ? o.getPoints() : 0).sum();
         String imageUrl = q.getImagePath() != null
             ? baseUrl + "/api/v1/job-tests/questions/" + q.getId() + "/image" : null;
         questionDetails.add(QuestionAnswerResponse.builder()
             .questionId(q.getId()).title("").statement(q.getText()).type("QCM")
-            .questionType("RADIO").points(maxPts).earnedPoints(qEarned)
+            .questionType("RADIO").points(maxPts).earnedPoints(counts[0])
             .orderIndex(q.getOrderIndex() != null ? q.getOrderIndex() : 0)
             .imageUrl(imageUrl).options(optionResponses)
             .likertPoints(List.of()).testCases(List.of())
             .answerDecision(null).answerNote(null).manualPoints(null).build());
-        return new int[]{mEarned, mMax, answeredDelta};
+        return new int[]{counts[1], counts[2], counts[3]};
+    }
+
+    private void processRhOption(QuestionOption opt, String selectedOptionId,
+            Map<String, Integer> dimScores, Map<String, Integer> dimMaxMap,
+            Map<String, ModelDimension> dimById, int[] counts,
+            List<QcmOptionAnswerResponse> optionResponses) {
+        boolean selected = opt.getId() != null && opt.getId().equals(selectedOptionId);
+        int pts = opt.getPoints() != null ? opt.getPoints() : 0;
+        if (pts > 0 && opt.getDimensionId() != null) {
+            dimMaxMap.merge(opt.getDimensionId(), pts, Integer::sum);
+            counts[2] += pts;
+        }
+        if (selected) {
+            if (opt.getDimensionId() != null) dimScores.merge(opt.getDimensionId(), pts, Integer::sum);
+            counts[0] += pts; counts[1] += pts; counts[3]++;
+        }
+        ModelDimension dimObj = opt.getDimensionId() != null ? dimById.get(opt.getDimensionId()) : null;
+        optionResponses.add(QcmOptionAnswerResponse.builder()
+            .id(opt.getId()).text(opt.getText()).isCorrect(false).points(pts)
+            .selected(selected).dimensionId(opt.getDimensionId())
+            .dimensionName(dimObj != null ? dimObj.getName() : null)
+            .optionText(opt.getText()).build());
     }
 
     // ── Full result helpers ──────────────────────────────────────────────────
