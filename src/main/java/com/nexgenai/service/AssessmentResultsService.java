@@ -318,8 +318,7 @@ public class AssessmentResultsService {
     private int[] processRhQuestion(Question q, String selectedOptionId,
             Map<String, Integer> dimScores, Map<String, Integer> dimMaxMap,
             Map<String, ModelDimension> dimById, List<QuestionAnswerResponse> questionDetails) {
-        int[] totals = new int[3]; // [qEarned, mEarned, mMax, answeredDelta] → 4 slots: use index 0=qEarned,1=mEarned,2=mMax,3=answered
-        int[] counts = {0, 0, 0, 0}; // qEarned, mEarned, mMax, answered
+        int[] counts = {0, 0, 0, 0}; // indices: 0=qEarned, 1=mEarned, 2=mMax, 3=answered
         List<QcmOptionAnswerResponse> optionResponses = new ArrayList<>();
         for (QuestionOption opt : q.getOptions()) {
             processRhOption(opt, selectedOptionId, dimScores, dimMaxMap, dimById, counts, optionResponses);
