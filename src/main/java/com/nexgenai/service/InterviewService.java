@@ -217,7 +217,36 @@ public class InterviewService {
 
     private record RoundContext(String interviewId, int parallelism,
             List<String> candidateIds, List<String> assigneeIds,
-            Map<String, String> assigneeNames, int[] candidateIdx) {}
+            Map<String, String> assigneeNames, int[] candidateIdx) {
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof RoundContext r)) return false;
+            return parallelism == r.parallelism
+                && Objects.equals(interviewId, r.interviewId)
+                && Objects.equals(candidateIds, r.candidateIds)
+                && Objects.equals(assigneeIds, r.assigneeIds)
+                && Objects.equals(assigneeNames, r.assigneeNames)
+                && Arrays.equals(candidateIdx, r.candidateIdx);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(interviewId, parallelism, candidateIds,
+                    assigneeIds, assigneeNames, Arrays.hashCode(candidateIdx));
+        }
+
+        @Override
+        public String toString() {
+            return "RoundContext[interviewId=" + interviewId
+                + ", parallelism=" + parallelism
+                + ", candidateIds=" + candidateIds
+                + ", assigneeIds=" + assigneeIds
+                + ", assigneeNames=" + assigneeNames
+                + ", candidateIdx=" + Arrays.toString(candidateIdx) + "]";
+        }
+    }
 
     private void buildSlotsForRound(LocalDateTime roundStart, LocalDateTime roundEnd,
             RoundContext ctx, List<InterviewSlot> slots) {
