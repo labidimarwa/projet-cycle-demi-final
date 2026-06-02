@@ -62,6 +62,7 @@ class Sprint2SecurityTest {
 
     @Autowired private WebApplicationContext wac;
     @Autowired private ObjectMapper          objectMapper;
+    @Autowired private SecurityAuditFilter   securityAuditFilter;
 
     @MockBean private EmailService         emailService;
     @MockBean private CodeExecutionService codeExecutionService;
@@ -79,6 +80,7 @@ class Sprint2SecurityTest {
     void setup() throws Exception {
         mockMvc = MockMvcBuilders.webAppContextSetup(wac)
             .apply(SecurityMockMvcConfigurers.springSecurity())
+            .addFilters(securityAuditFilter)
             .build();
 
         // Register a CANDIDATE test account to get a valid JWT
