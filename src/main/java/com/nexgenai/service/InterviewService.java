@@ -215,17 +215,20 @@ public class InterviewService {
         return toSummary(interview);
     }
 
-    private void buildSlotsForRound(String interviewId, LocalDateTime roundStart, LocalDateTime roundEnd,
-            int parallelism, List<String> candidateIds, List<String> assigneeIds,
-            Map<String, String> assigneeNames, int[] candidateIdx, List<InterviewSlot> slots) {
-        for (int i = 0; i < parallelism && candidateIdx[0] < candidateIds.size(); i++) {
-            String candidateId = candidateIds.get(candidateIdx[0]++);
+    private record RoundContext(String interviewId, int parallelism,
+            List<String> candidateIds, List<String> assigneeIds,
+            Map<String, String> assigneeNames, int[] candidateIdx) {}
+
+    private void buildSlotsForRound(LocalDateTime roundStart, LocalDateTime roundEnd,
+            RoundContext ctx, List<InterviewSlot> slots) {
+        for (int i = 0; i < ctx.parallelism() && ctx.candidateIdx()[0] < ctx.candidateIds().size(); i++) {
+            String candidateId = ctx.candidateIds().get(ctx.candidateIdx()[0]++);
             User candidate = userRepository.findById(candidateId).orElse(null);
             if (candidate == null) continue;
-            String assigneeId   = assigneeIds.get(i % parallelism);
-            String assigneeName = assigneeNames.getOrDefault(assigneeId, "");
+            String assigneeId   = ctx.assigneeIds().get(i % ctx.parallelism());
+            String assigneeName = ctx.assigneeNames().getOrDefault(assigneeId, "");
             InterviewSlot slot = InterviewSlot.builder()
-                    .interviewId(interviewId).candidateId(candidateId)
+                    .interviewId(ctx.interviewId()).candidateId(candidateId)
                     .candidateName(candidate.getFirstName() + " " + candidate.getLastName())
                     .candidateEmail(candidate.getEmail())
                     .assigneeId(assigneeId).assigneeName(assigneeName)
@@ -323,12 +326,13 @@ public class InterviewService {
         // Build slots: for each round, assign up to `parallelism` candidates
         List<InterviewSlot> slots = new ArrayList<>();
         int[] candidateIdx = {0};
+        RoundContext ctx = new RoundContext(interviewId, parallelism,
+                candidateIds, assigneeIds, assigneeNames, candidateIdx);
 
         for (LocalDateTime roundStart : rounds) {
             if (candidateIdx[0] >= candidateIds.size()) break;
             LocalDateTime roundEnd = roundStart.plusMinutes(duration);
-            buildSlotsForRound(interviewId, roundStart, roundEnd, parallelism,
-                    candidateIds, assigneeIds, assigneeNames, candidateIdx, slots);
+            buildSlotsForRound(roundStart, roundEnd, ctx, slots);
         }
 
         // Compute phase end = last slot end

@@ -176,10 +176,14 @@ public class CvMatchingService {
         // Poids définis par le RH lors de la création du poste (défaut 70/30)
         double wSkills  = (jobAvecSkills.getSkillsWeight()        != null ? jobAvecSkills.getSkillsWeight()        : 70) / 100.0;
         double wPrereqs = (jobAvecSkills.getPrerequisitesWeight() != null ? jobAvecSkills.getPrerequisitesWeight() : 30) / 100.0;
-        double scoreGlobal = forceRejet ? 0.0
-            : resultatsPrereqs.isEmpty()
-                ? arrondir(scoreSkills)
-                : arrondir(scoreSkills * wSkills + scorePrerequisite * wPrereqs);
+        double scoreGlobal;
+        if (forceRejet) {
+            scoreGlobal = 0.0;
+        } else if (resultatsPrereqs.isEmpty()) {
+            scoreGlobal = arrondir(scoreSkills);
+        } else {
+            scoreGlobal = arrondir(scoreSkills * wSkills + scorePrerequisite * wPrereqs);
+        }
         String recommendation = determinerRecommandation(scoreGlobal, forceRejet);
 
         // ── 7. Sauvegarde BDD (upsert) ────────────────────────────────────────
