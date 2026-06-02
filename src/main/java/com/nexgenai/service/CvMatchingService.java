@@ -106,7 +106,7 @@ public class CvMatchingService {
         cvBytes = resolverBytesCV(candidat, cvBytes);
 
         // ── Cache : même CV + même poste → rapport existant (avant appel Python) ──
-        String cvHash = md5(cvBytes);
+        String cvHash = cvHash(cvBytes);
         // ── Chargement du poste (deux requêtes pour éviter MultipleBagFetchException) ──
         Job jobAvecSkills = jobRepository.findByIdWithSkills(jobId)
             .orElseThrow(() -> new RuntimeException("Poste introuvable : " + jobId));
@@ -500,9 +500,9 @@ public class CvMatchingService {
     private double arrondir(double v)  { return Math.round(v * 10.0)    / 10.0; }
     private double arrondir3(double v) { return Math.round(v * 1000.0)  / 1000.0; }
 
-    private String md5(byte[] data) {
+    private String cvHash(byte[] data) {
         try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(md.digest(data));
         } catch (Exception e) {
             return String.valueOf(Arrays.hashCode(data));
