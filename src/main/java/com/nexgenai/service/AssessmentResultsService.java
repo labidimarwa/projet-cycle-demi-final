@@ -101,6 +101,8 @@ public class AssessmentResultsService {
     @Transactional(readOnly = true)
     public CandidateTestResultResponse getRhCandidateResult(String assessmentId, String candidateId) {
         Assessment assessment = findAssessment(assessmentId);
+        // Pass 2: force-load questions + options into the current persistence context
+        assessmentRepository.findByIdWithQuestions(assessmentId);
         TestSession session = testSessionRepository
             .findByCandidateIdAndAssessmentId(candidateId, assessmentId)
             .orElseThrow(() -> new RuntimeException("RH session not found"));
@@ -151,6 +153,13 @@ public class AssessmentResultsService {
         List<TestSession> allCompleted = completedSorted(assessmentId);
         int rank = allCompleted.indexOf(session) + 1;
 
+        Map<String, TestSessionAnswer> answersMap = sessionAnswerRepository.findBySessionId(session.getId())
+            .stream().collect(Collectors.toMap(TestSessionAnswer::getQuestionId, a -> a));
+        Map<String, TestSessionAnswerDecision> decisionsMap = decisionRepository.findBySessionId(session.getId())
+            .stream().collect(Collectors.toMap(TestSessionAnswerDecision::getQuestionId, d -> d));
+        List<ThemeAnswersResponse> themeAnswers = new ArrayList<>();
+        buildFullThemeAnswers(session, assessment, answersMap, decisionsMap, themeAnswers);
+
         return CandidateTestResultResponse.builder()
             .submissionId(session.getId()).candidateId(candidate.getId())
             .candidateName(candidate.getFirstName() + " " + candidate.getLastName())
@@ -161,7 +170,8 @@ public class AssessmentResultsService {
             .completedAt(session.getCompletedAt() != null ? session.getCompletedAt().toString() : null)
             .durationMinutes(computeDuration(session))
             .totalScore(earnedPts).maxScore(totalPts).percentage(pct)
-            .rank(rank > 0 ? rank : null).themes(List.of()).modelAnswers(List.of()).build();
+            .rank(rank > 0 ? rank : null)
+            .themes(List.of()).modelAnswers(List.of()).themeAnswers(themeAnswers).build();
     }
 
     @Transactional(readOnly = true)

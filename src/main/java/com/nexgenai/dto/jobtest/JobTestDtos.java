@@ -268,8 +268,9 @@ public class JobTestDtos {
         private int     candidatesCount;
         private int     completionRate;
         private String  createdAt;
-        private String  source;       // "JOB_TEST" | "WORKFLOW_STAGE"
-        private String  stageType;    // "RH_TEST" | "TECHNICAL_TEST" | null
+        private String  source;           // "JOB_TEST" | "WORKFLOW_STAGE"
+        private String  stageType;        // "RH_TEST" | "TECHNICAL_TEST" | null
+        private String  assessmentType;   // "RH" | "TECHNICAL" — from Assessment.type
         private String  assignedTo;
         private String  assigneeId;
     }
@@ -352,6 +353,7 @@ public class JobTestDtos {
         private Integer rank;
         private List<ThemeResultResponse>  themes;
         private List<ModelAnswersResponse> modelAnswers;
+        private List<ThemeAnswersResponse> themeAnswers;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor

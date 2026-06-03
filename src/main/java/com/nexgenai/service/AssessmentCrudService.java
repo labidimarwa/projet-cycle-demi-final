@@ -612,7 +612,9 @@ public class AssessmentCrudService {
             .candidatesCount(testSessionRepository.countByAssessmentId(a.getId()))
             .completionRate(0)
             .createdAt(a.getCreatedAt() != null ? a.getCreatedAt().toString() : null)
-            .stageType(stageTypeName).source("ASSESSMENT").build();
+            .stageType(stageTypeName)
+            .assessmentType(a.getType() != null ? a.getType().name() : null)
+            .source("ASSESSMENT").build();
     }
 
     private void processThemePayload(SaveFullTestRequest.ThemePayload thPayload, Assessment assessment) {
